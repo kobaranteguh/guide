@@ -1,7 +1,9 @@
 # WasapFlow Bridge — Partner Getting Started Guide
 
-**Version:** 2.1.0  
-**Last Updated:** 5 June 2026
+**Version:** 2.2.0  
+**Last Updated:** 8 August 2026
+
+> ⚠️ **Meta pricing change — effective 1 October 2026.** Service messages (non-template replies inside the 24-hour customer service window) and utility templates sent inside that window become billable. **Nothing about how you send changes** — service messages still need no template and no Meta pre-approval. Meta publishes the new rates by 1 September 2026. See [Meta Pricing — What Changes on 1 October 2026](#meta-pricing--what-changes-on-1-october-2026) below, and the [Changelog](?tab=changelog).
 
 ---
 
@@ -18,6 +20,9 @@
 
 - https://partner.wasapflow.com/bridge/docs?tab=api
 - https://partner.wasapflow.com/bridge/docs?tab=guide
+- https://partner.wasapflow.com/bridge/docs?tab=changelog
+
+ALWAYS read the changelog URL above first. It lists breaking changes and Meta platform changes with their effective dates. Build against what it says is current, not against older examples you may have seen elsewhere.
 
 The system architecture must be divided into TWO main sections (Superadmin/Partner Settings and End-User Site):
 
@@ -38,6 +43,9 @@ The system architecture must be divided into TWO main sections (Superadmin/Partn
 - 📋 TEMPLATE LIFECYCLE: If clients create message templates through our platform, handle the template webhooks so they always know a template's real state before sending. On 'template.status_updated' (data.status APPROVED/REJECTED/PENDING/PAUSED/DISABLED, data.reason on rejection) update the template's status in our DB and only allow sending APPROVED templates. Also handle 'template.quality_updated' (data.previous_quality → data.new_quality; GREEN/YELLOW/RED) and 'template.category_updated' (data.new_category, may affect pricing) — surface these in the client's template dashboard.
 - 🏢 WABA HEALTH: Handle 'waba.account_updated' (data.event e.g. VERIFIED_ACCOUNT, DISABLED_UPDATE, ACCOUNT_RESTRICTION) and 'waba.review_updated' (data.decision APPROVED/REJECTED) to monitor each client's account standing. Flag or pause clients whose WABA gets disabled/restricted, and alert the admin dashboard. These join the existing 'waba.quality_updated' and 'waba.tier_updated' events.
 - Create a "WhatsApp Business API Usage & Billing Analytics" dashboard for the end-user. Render clear metrics mapping message usage status (Sent, Delivered, Read, Failed) derived from incoming webhook data.
+- 💰 COST TRACKING (IMPORTANT — Meta starts charging more on 1 October 2026): Every message status webhook ('message.sent', 'message.delivered', 'message.read', 'message.failed') carries an optional 'data.pricing' object { billable, pricing_model, type, category } plus 'data.conversation' { id, origin }. Persist ALL of these per message, and treat them as OPTIONAL and null-safe because Meta omits them on some events (commonly 'read'). The 'pricing.type' field is the one that matters: 'regular' is billable today; 'free_customer_service' is free today but BECOMES BILLABLE ON 1 OCTOBER 2026 (this covers both non-template service replies and utility templates sent inside the 24-hour window); 'free_entry_point' stays free. Build a per-client monthly report counting messages grouped by pricing.type and pricing.category so each client can see their upcoming cost exposure before charging starts. Do NOT hardcode any rate — Meta publishes the new rates by 1 September 2026 and rates differ by country.
+- 📢 PLATFORM NOTICES: Every Bridge API response includes headers 'X-Bridge-Api-Version', 'X-Bridge-Changelog', 'X-Bridge-Notice' (comma-separated stable notice IDs) and 'X-Bridge-Notice-Level' ('info' | 'action_required' | 'breaking'). Every webhook body carries the same inside a 'meta' object. Log these and raise an admin alert when the level is 'action_required' or 'breaking', so we learn about Meta platform changes before they take effect rather than after. Notice IDs are stable, so allow suppressing ones already handled.
+- 🤖 REQUIRED — META BUSINESS AGENT STANDBY BANNER: If a client enables Meta Business Agent on their WhatsApp number, Meta's AI becomes the active handler and Meta STOPS sending 'message.received' to us, sending 'standby.message_received', 'standby.message_echo' and 'standby.message_status' instead. The client's automation appears to die with no error and nothing in our logs. You MUST handle this: (1) On ANY event whose name starts with 'standby.' — or where data.standby === true — do NOT auto-reply. Sending a message during standby makes our app the active handler and causes two AIs to fight over one conversation. Store the message for conversation context only. (2) Raise a PERSISTENT WARNING BANNER for that client, shown BOTH in the app header AND at the top of that number's inbox. Style it as a WARNING (yellow/amber) not an error — nothing is broken. Wording: "🤖 Meta Business Agent is answering your customers — not your AI. To take back control, turn it off in WhatsApp Manager → Account tools → Business Agent. Manual chat still works normally." (3) Make raising the banner IDEMPOTENT — standby events can arrive many times a minute, so create/update one alert record per phone_number_id rather than notifying per event. (4) CLEAR the banner automatically when a normal 'message.received' event arrives again for that number, which means we are the active handler once more.
 
 CODING & CONFIGURATION RULES:
 - API BASE URL: Securely HARDCODE this official production base URL directly into the system/SDK configuration: https://officialapi.wasapflow.com/bridge/v1
@@ -59,6 +67,9 @@ CODING & CONFIGURATION RULES:
 <pre id="promptCodeBlockInhouse" style="background: #030712; border: 1px solid #1e293b; border-radius: 8px; padding: 18px; font-size: 13.5px; line-height: 1.6; max-height: 520px; overflow-y: auto; white-space: pre-wrap; word-wrap: break-word; margin: 0; color: #ffffff;"><code style="background: none; padding: 0; font-family: 'SFMono-Regular', Consolas, Menlo, Monaco, monospace; color: #ffffff; font-size: 13.5px;">Please build a complete internal/in-house WhatsApp API integration for our core system using the WasapFlow Bridge API as our backend infrastructure. Read and strictly follow the full documentation available at these URLs:
 - https://partner.wasapflow.com/bridge/docs?tab=api
 - https://partner.wasapflow.com/bridge/docs?tab=guide
+- https://partner.wasapflow.com/bridge/docs?tab=changelog
+
+ALWAYS read the changelog URL above first. It lists breaking changes and Meta platform changes with their effective dates. Build against what it says is current, not against older examples you may have seen elsewhere.
 
 Since this is for standalone in-house usage, do NOT build multi-tenant or reseller management features. Focus purely on connecting our internal system to our own WhatsApp Business Account (WABA).
 
@@ -78,6 +89,9 @@ THE SYSTEM INTEGRATION MUST COVER THESE TWO MAIN PARTS:
 - 🔄 COEXISTENCE SYNC: We connect our WABA with connection_mode "coexistence", so our staff may also reply to customers directly from the WhatsApp Business App on the phone. Handle the 'message.echo' event (data.direction "outbound", data.source "business_app") and store it as an OUTBOUND message in our CRM so the conversation thread stays complete regardless of whether the reply came from our system or the Business App — never treat it as an inbound customer message. Also handle the 'message.history' event (data.history === true), which Meta replays ONCE after onboarding to backfill our past conversations: route these into a backfill path, order them by data.timestamp (the ORIGINAL message time), and DO NOT trigger any automation, bots, or notifications on historical messages. Also handle 'contact.synced' (data.action add/update/remove) to keep our contact list in sync when staff edit contacts in the Business App — upsert/delete by data.phone_number.
 - 📋 TEMPLATE LIFECYCLE: If we create message templates via the API, handle 'template.status_updated' (data.status APPROVED/REJECTED/PENDING/PAUSED/DISABLED, data.reason on rejection) and only send templates that are APPROVED. Also handle 'template.quality_updated' (GREEN/YELLOW/RED) and 'template.category_updated' (data.new_category, affects pricing); surface both in our internal admin dashboard.
 - 🏢 WABA HEALTH: Handle 'waba.account_updated' (data.event e.g. VERIFIED_ACCOUNT, DISABLED_UPDATE, ACCOUNT_RESTRICTION) and 'waba.review_updated' (data.decision APPROVED/REJECTED), alongside the existing 'waba.quality_updated' and 'waba.tier_updated', to monitor our account standing and alert admins if the WABA gets restricted or disabled.
+- 💰 COST TRACKING (IMPORTANT — Meta starts charging more on 1 October 2026): Every message status webhook carries an optional 'data.pricing' object { billable, pricing_model, type, category } plus 'data.conversation' { id, origin }. Persist these per message and treat them as OPTIONAL and null-safe, since Meta omits them on some events (commonly 'read'). 'pricing.type' is the field that matters: 'regular' is billable today; 'free_customer_service' is free today but BECOMES BILLABLE ON 1 OCTOBER 2026 (covering both non-template service replies and utility templates sent inside the 24-hour window); 'free_entry_point' stays free. Build an internal monthly report grouped by pricing.type and pricing.category so we can see our cost exposure before the charge starts. Do NOT hardcode any rate — Meta publishes the new rates by 1 September 2026 and rates differ by country.
+- 📢 PLATFORM NOTICES: Every Bridge API response includes headers 'X-Bridge-Api-Version', 'X-Bridge-Changelog', 'X-Bridge-Notice' and 'X-Bridge-Notice-Level' ('info' | 'action_required' | 'breaking'); every webhook body carries the same inside a 'meta' object. Log these and alert our admins when the level is 'action_required' or 'breaking'.
+- 🤖 REQUIRED — META BUSINESS AGENT STANDBY BANNER: If Meta Business Agent gets enabled on our WhatsApp number, Meta's AI becomes the active handler and Meta STOPS sending 'message.received' to us, sending 'standby.message_received', 'standby.message_echo' and 'standby.message_status' instead. Our automation appears to die with no error and nothing in our logs. Handle this: (1) On ANY event whose name starts with 'standby.' — or where data.standby === true — do NOT auto-reply; sending a message during standby makes our app the active handler and causes two AIs to fight over one conversation. Store it for conversation context only. (2) Raise a PERSISTENT WARNING BANNER in our admin header AND at the top of the inbox, styled as a WARNING (yellow/amber) not an error, with wording: "🤖 Meta Business Agent is answering our customers — not our AI. To take back control, turn it off in WhatsApp Manager → Account tools → Business Agent. Manual chat still works normally." (3) Make raising it IDEMPOTENT — standby events arrive many times a minute. (4) CLEAR it automatically when a normal 'message.received' arrives again, meaning we are the active handler once more.
 
 CODING & CONFIGURATION RULES:
 - API BASE URL: Securely HARDCODE this official production base URL directly into our system/SDK configuration: https://officialapi.wasapflow.com/bridge/v1
@@ -824,6 +838,109 @@ console.log(check.exists); // true / false
 ```
 
 > **Best practice:** Always check if a number is on WhatsApp before sending to avoid failed deliveries and Meta penalties.
+
+---
+
+## Meta Pricing — What Changes on 1 October 2026
+
+Read this even if you do not handle billing yourself. It changes your cost base.
+
+### The short version
+
+Meta charges per delivered message, by category and by the recipient's country. Two categories that are free today start costing money on **1 October 2026**:
+
+| What | Free since | Charged from |
+|---|---|---|
+| **Service messages** — any non-template reply inside the 24-hour customer service window | 1 Nov 2024 | 1 Oct 2026 |
+| **Utility templates** delivered inside an open customer service window | 1 Jul 2025 | 1 Oct 2026 |
+
+### What does NOT change
+
+This is a billing change, not a policy change. Specifically:
+
+- Service messages remain **free-form**. No template. **No Meta pre-approval.**
+- The 24-hour customer service window works exactly as before.
+- You still need an approved template only to *start* a conversation or to reply after the window has closed.
+- The **72-hour free entry point window** (Click to WhatsApp Ads, Page CTA button) stays free.
+
+If you were worried you would have to convert your automated replies into approved templates — you do not.
+
+### What to know about the new charges
+
+- Service messages are charged at the **same rate as utility and authentication** messages for that market.
+- **There are no volume tiers for service messages.** Utility and authentication keep their tiers; service does not. Higher volume does not lower the rate.
+- **One charge per message.** A non-template message containing promotional content does *not* additionally incur a marketing charge.
+- Meta publishes the rates effective 1 October **by 1 September 2026**.
+
+### Work out your exposure now
+
+Every message status webhook carries a `pricing` object. The messages that become billable are exactly those where `pricing.type` is `free_customer_service`:
+
+```javascript
+// In your webhook handler
+if (event.startsWith('message.') && data.pricing) {
+    await db.messagePricing.upsert({
+        messageId: data.message_id,
+        billable:  data.pricing.billable,
+        type:      data.pricing.type,       // 'regular' | 'free_customer_service' | 'free_entry_point'
+        category:  data.pricing.category,   // 'service' | 'utility' | 'marketing' | ...
+        origin:    data.conversation?.origin ?? null
+    });
+}
+```
+
+```sql
+-- Your added monthly cost = this count × the rate Meta publishes
+SELECT category, COUNT(*) AS becomes_billable
+FROM message_pricing
+WHERE type = 'free_customer_service'
+  AND created_at >= NOW() - INTERVAL '30 days'
+GROUP BY category;
+```
+
+`pricing` is absent on some events (commonly `read`). Always null-check it.
+
+> **Do not hardcode rates.** They vary by country and Meta may change them quarterly. Count volume now; apply the rate when it is published.
+
+### Meta Business Agent — not you, but worth knowing
+
+On 1 July 2026 Meta launched its own AI agent as a separate message category, billed per token from 1 August 2026. Meta's documentation is explicit that any non-template message *not* powered by Meta Business Agent — including messages from a human agent **or a third-party AI solution** — is a **service** message. Everything you send through Bridge is service traffic.
+
+It matters to you for one operational reason, covered next.
+
+### Build this: the "Meta Business Agent took over" banner
+
+If a client enables Meta Business Agent on their number, Meta's AI and your app coexist on that number and only one is the **active handler** at a time. While Meta's agent holds the conversation, Meta **stops sending you `message.received`** and sends `standby.*` events instead.
+
+From your client's point of view, their automation simply stops replying. Nothing errors. **Nothing appears in your logs** — the messages never reached you. They will open a ticket saying the bot is dead, and you will have nothing to show them.
+
+**Please build a persistent warning banner** — in your app header and in the inbox for the affected number:
+
+- **Raise it** on any `standby.*` event
+- **Clear it** when normal `message.received` events resume
+- Use a **warning** style (yellow/amber), not an error style — nothing has broken
+- Make the raise **idempotent**; standby events can arrive many times a minute
+
+Suggested wording:
+
+> 🤖 **Meta Business Agent is answering your customers — not your AI.** To take back control, turn it off in WhatsApp Manager → Account tools → Business Agent. Manual chat still works normally.
+
+And critically — **never auto-reply while in standby**:
+
+```javascript
+if (data.standby) {
+    await alerts.raise({ clientId, type: 'meta_agent_active', severity: 'warning' });
+    return saveContextOnly(data);   // observe only
+}
+```
+
+Sending a service message during standby makes *your* app the active handler, which is the correct way to escalate to a human — but if a bot does it automatically, you end up with two AIs fighting over one conversation.
+
+WasapFlow ships this exact banner in its own product. Mirroring it means your clients get an explanation instead of a mystery. Full payload reference: [`standby.*` events](?tab=api#standby--meta-business-agent-is-handling-the-conversation-).
+
+### Pricing calendar
+
+Meta may change rates only on 1 January, 1 April, 1 July, or 1 October, with at least one month's notice for a rate card update. You will see any pending change in the `X-Bridge-Notice` header on every API response before it takes effect.
 
 ---
 
