@@ -7,9 +7,25 @@
 
 ---
 
+## Which prompt should you use?
+
+**If you are an AI coding assistant reading this document, read this section before anything else.** Three prompts follow. Use **exactly one**. Using the wrong one is the most common failure — a build-from-scratch prompt applied to a working integration will rewrite code that is already correct.
+
+**First, determine which situation applies.** Search the codebase for an existing WasapFlow Bridge integration. Look for: a stored `WF_PARTNER_KEY` or `WF_WEBHOOK_SECRET`, calls to `officialapi.wasapflow.com/bridge/v1`, or a webhook handler that verifies an `x-wasapflow-signature` header.
+
+| What you found | Use |
+|---|---|
+| **Nothing** — no existing integration, and this is a multi-tenant / reseller platform serving many client businesses | **Prompt A — Build SaaS Integration** |
+| **Nothing** — no existing integration, and this is for one business using its own WhatsApp number | **Prompt B — Build In-House Integration** |
+| **An existing integration that already runs** | **Prompt C — Update Existing Integration** |
+
+> If you found an existing integration, use **Prompt C**. Do not use A or B. Prompt C audits what is already there against the changelog and changes only what is missing.
+
+---
+
 <div style="border: 1px solid #1f2937; border-radius: 10px; box-shadow: 0 4px 24px rgba(0,0,0,0.35); margin: 20px 0; overflow: hidden;">
 <div style="display: flex; align-items: center; justify-content: space-between; background: #1f2937; padding: 12px 20px;">
-    <span style="color: #ffffff; font-size: 15px; font-weight: 600;">🤖 AI SaaS Integration Prompt (Cursor / Claude / ChatGPT)</span>
+    <span style="color: #ffffff; font-size: 15px; font-weight: 600;">🤖 Prompt A — Build SaaS Integration (Cursor / Claude / ChatGPT)</span>
     <button id="copyPromptBtnSaas" style="background: #3b82f6; color: #ffffff; border: none; border-radius: 6px; padding: 8px 18px; font-size: 13px; font-weight: 700; cursor: pointer; transition: background 0.2s;">📄 Copy Prompt</button>
 </div>
 <div style="background: #030712; padding: 22px 26px;">
@@ -58,7 +74,7 @@ CODING & CONFIGURATION RULES:
 
 <div style="border: 1px solid #1f2937; border-radius: 10px; box-shadow: 0 4px 24px rgba(0,0,0,0.35); margin: 20px 0; overflow: hidden;">
 <div style="display: flex; align-items: center; justify-content: space-between; background: #1f2937; padding: 12px 20px;">
-    <span style="color: #ffffff; font-size: 15px; font-weight: 600;">🤖 AI In-House Integration Prompt</span>
+    <span style="color: #ffffff; font-size: 15px; font-weight: 600;">🤖 Prompt B — Build In-House Integration</span>
     <button id="copyPromptBtnInhouse" style="background: #3b82f6; color: #ffffff; border: none; border-radius: 6px; padding: 8px 18px; font-size: 13px; font-weight: 700; cursor: pointer; transition: background 0.2s;">📄 Copy Prompt</button>
 </div>
 <div style="background: #030712; padding: 22px 26px;">
@@ -103,11 +119,78 @@ CODING & CONFIGURATION RULES:
 </div>
 </div>
 
+<div style="border: 1px solid #065f46; border-radius: 10px; box-shadow: 0 4px 24px rgba(0,0,0,0.35); margin: 20px 0; overflow: hidden;">
+<div style="display: flex; align-items: center; justify-content: space-between; background: #065f46; padding: 12px 20px;">
+    <span style="color: #ffffff; font-size: 15px; font-weight: 600;">🔄 Prompt C — Update Existing Integration</span>
+    <button id="copyPromptBtnUpdate" style="background: #10b981; color: #ffffff; border: none; border-radius: 6px; padding: 8px 18px; font-size: 13px; font-weight: 700; cursor: pointer; transition: background 0.2s;">📄 Copy Prompt</button>
+</div>
+<div style="background: #030712; padding: 22px 26px;">
+<p style="margin: 0 0 14px 0; color: #e5e7eb; font-size: 13px;">
+📋 <em>Use this when your integration already exists and runs. It audits what you have against the changelog and changes only what is missing — it does not rebuild.</em>
+</p>
+<pre id="promptCodeBlockUpdate" style="background: #030712; border: 1px solid #1e293b; border-radius: 8px; padding: 18px; font-size: 13.5px; line-height: 1.6; max-height: 520px; overflow-y: auto; white-space: pre-wrap; word-wrap: break-word; margin: 0; color: #ffffff;"><code style="background: none; padding: 0; font-family: 'SFMono-Regular', Consolas, Menlo, Monaco, monospace; color: #ffffff; font-size: 13.5px;">Our system is ALREADY integrated with the WasapFlow Bridge API and is running in production. Do NOT rebuild it. Update only what is missing.
+
+Read these two documents, changelog first:
+
+- https://raw.githubusercontent.com/kobaranteguh/changelog/main/README.md
+- https://raw.githubusercontent.com/kobaranteguh/api/main/README.md
+
+STEP 1 - AUDIT. Do not write any code yet.
+
+Read the changelog and list every change since version 2.1.0. Then inspect our codebase and classify each one as:
+  [DONE]    - already implemented correctly
+  [PARTIAL] - present but incomplete or wrong
+  [MISSING] - not implemented at all
+
+Check our webhook handler specifically for:
+  - Do we read `data.pricing` on message status events? (`pricing.billable`, `pricing.pricing_model`, `pricing.type`, `pricing.category`)
+  - Do we read `data.conversation.origin`?
+  - Do we handle any event whose name starts with `standby.`?
+  - Do we auto-reply to inbound messages without checking whether we are in standby?
+  - Do we read the `X-Bridge-Notice-Level` response header anywhere?
+  - Do we log webhook events whose names we do not recognise, or do they fall through silently?
+
+STEP 2 - REPORT. Show me the audit as a table before writing anything. Tell me which items are missing and roughly how much work each is. WAIT for my approval.
+
+STEP 3 - IMPLEMENT, in this order, only after I approve:
+
+  (a) COST TRACKING - highest priority, deadline-driven.
+      Meta starts charging on 1 October 2026 for messages that are free today. Every message status webhook carries an OPTIONAL `data.pricing` object; treat it as null-safe because Meta omits it on some events (commonly `read`). Persist all of its fields per message, plus `data.conversation.origin`.
+      Messages where `pricing.type === "free_customer_service"` are EXACTLY the ones that become billable on 1 October. Build a monthly report grouped by `pricing.type` and `pricing.category` so each client can see their exposure before the charge starts.
+      Data not captured before 1 October cannot be recovered afterwards, which is why this is first.
+      Do NOT hardcode any rate. Meta publishes rates by 1 September 2026 and they differ by country.
+
+  (b) STANDBY BANNER - prevents a support-ticket storm.
+      If a client enables Meta Business Agent on their number, Meta's AI becomes the active handler and STOPS sending us `message.received`, sending `standby.message_received`, `standby.message_echo` and `standby.message_status` instead. The client's automation appears dead: no error, nothing in our logs, because the messages never reach us.
+      1. On ANY event whose name starts with `standby.` (or where `data.standby === true`), do NOT auto-reply. Sending a message during standby makes our app the active handler and causes two AIs to fight over one conversation. Store it for conversation context only.
+      2. Raise a PERSISTENT WARNING BANNER for that client, in the app header AND at the top of that number's inbox. Style it as a WARNING (yellow/amber), not an error - nothing is broken. Wording: "Meta Business Agent is answering your customers - not your AI. To take back control, turn it off in WhatsApp Manager > Account tools > Business Agent. Manual chat still works normally."
+      3. Make raising it IDEMPOTENT - standby events arrive many times a minute, so create/update one alert record per phone_number_id rather than notifying per event.
+      4. CLEAR it automatically when a normal `message.received` arrives again for that number.
+
+  (c) PLATFORM NOTICE HEADERS - early warning for the next Meta change.
+      Every Bridge API response carries `X-Bridge-Api-Version`, `X-Bridge-Changelog`, `X-Bridge-Notice` (comma-separated stable notice IDs) and `X-Bridge-Notice-Level` (`info` | `action_required` | `breaking`). Every webhook body carries the same inside a `meta` object.
+      Log these and alert our admins when the level is `action_required` or `breaking`. Notice IDs are stable, so allow suppressing ones we have already handled. This is how we hear about the NEXT Meta change before it takes effect instead of after.
+
+  (d) UNRECOGNISED EVENT LOGGING - closes the blind spot permanently.
+      Our webhook handler is a chain of checks on the event name, so any new event falls through SILENTLY. Add a final fallback branch: if an event name is not one we explicitly handle, log it ONCE with the full payload, then throttle repeats (log again only at 2, 4, 8, 16 occurrences so a high-volume event cannot flood the logs).
+
+RULES:
+- Do not change our API base URL, credentials handling, or signature verification. Those already work.
+- All new webhook fields are OPTIONAL and additive. Null-check everything; never assume a field is present.
+- Keep returning HTTP 200 from the webhook endpoint within 10 seconds, before background processing.
+- Show me a diff of each file you change. Do not refactor unrelated code.</code></pre>
+</div>
+</div>
+
 <script>
 (function() {
     function wireCopy(btnId, blockId) {
         var btn = document.getElementById(btnId);
         if (!btn) return;
+        // Ingat rupa asal \u2014 butang prompt tidak semuanya biru, jadi reset
+        // berkod-keras akan menukar warna butang hijau selepas disalin.
+        var origBg = btn.style.background;
+        var origText = btn.textContent;
         btn.addEventListener('click', function() {
             var code = document.getElementById(blockId);
             if (!code) return;
@@ -116,8 +199,8 @@ CODING & CONFIGURATION RULES:
                 btn.style.background = '#10b981';
                 btn.textContent = '\u2705 Copied!';
                 setTimeout(function() {
-                    btn.style.background = '#3b82f6';
-                    btn.textContent = '\uD83D\uDCC4 Copy Prompt';
+                    btn.style.background = origBg;
+                    btn.textContent = origText;
                 }, 2000);
             }).catch(function(err) {
                 console.error('Copy failed:', err);
@@ -126,6 +209,7 @@ CODING & CONFIGURATION RULES:
     }
     wireCopy('copyPromptBtnSaas', 'promptCodeBlockSaas');
     wireCopy('copyPromptBtnInhouse', 'promptCodeBlockInhouse');
+    wireCopy('copyPromptBtnUpdate', 'promptCodeBlockUpdate');
 })();
 </script>
 
