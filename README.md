@@ -1,7 +1,7 @@
 # WasapFlow Bridge — Partner Getting Started Guide
 
-**Version:** 2.2.0  
-**Last Updated:** 8 August 2026
+**Version:** 2.3.0  
+**Last Updated:** 11 August 2026
 
 > ⚠️ **Meta pricing change — effective 1 October 2026.** Service messages (non-template replies inside the 24-hour customer service window) and utility templates sent inside that window become billable. **Nothing about how you send changes** — service messages still need no template and no Meta pre-approval. Meta publishes the new rates by 1 September 2026. See [Meta Pricing — What Changes on 1 October 2026](#meta-pricing--what-changes-on-1-october-2026) below, and the [Changelog](?tab=changelog).
 
@@ -63,6 +63,7 @@ The system architecture must be divided into TWO main sections (Superadmin/Partn
 - 📢 PLATFORM NOTICES: Every Bridge API response includes headers 'X-Bridge-Api-Version', 'X-Bridge-Changelog', 'X-Bridge-Notice' (comma-separated stable notice IDs) and 'X-Bridge-Notice-Level' ('info' | 'action_required' | 'breaking'). Every webhook body carries the same inside a 'meta' object. Log these and raise an admin alert when the level is 'action_required' or 'breaking', so we learn about Meta platform changes before they take effect rather than after. Notice IDs are stable, so allow suppressing ones already handled.
 - 🤖 REQUIRED — META BUSINESS AGENT STANDBY BANNER: If a client enables Meta Business Agent on their WhatsApp number, Meta's AI becomes the active handler and Meta STOPS sending 'message.received' to us, sending 'standby.message_received', 'standby.message_echo' and 'standby.message_status' instead. The client's automation appears to die with no error and nothing in our logs. You MUST handle this: (1) On ANY event whose name starts with 'standby.' — or where data.standby === true — do NOT auto-reply. Sending a message during standby makes our app the active handler and causes two AIs to fight over one conversation. Store the message for conversation context only. (2) Raise a PERSISTENT WARNING BANNER for that client, shown BOTH in the app header AND at the top of that number's inbox. Style it as a WARNING (yellow/amber) not an error — nothing is broken. Wording: "🤖 Meta Business Agent is answering your customers — not your AI. To take back control, turn it off in WhatsApp Manager → Account tools → Business Agent. Manual chat still works normally." (3) Make raising the banner IDEMPOTENT — standby events can arrive many times a minute, so create/update one alert record per phone_number_id rather than notifying per event. (4) CLEAR the banner automatically when a normal 'message.received' event arrives again for that number, which means we are the active handler once more.
 - 🔍 LOG UNRECOGNISED WEBHOOK EVENTS: Our webhook handler will be a chain of checks on the event name, which means any NEW event Bridge or Meta introduces falls through SILENTLY - no error, no log, nothing, and we find out months later when a client reports something odd. Add a final fallback branch: if an incoming event name is not one we explicitly handle, log it ONCE with the full payload, then throttle repeats (e.g. log again only at 2, 4, 8, 16 occurrences so a high-volume event cannot flood the logs). This is how we learn about new Meta capabilities in days instead of months.
+- 📞 PHONE NUMBER IS NOT THE WHATSAPP ID (REQUIRED by Meta): Do NOT assume a customer's WhatsApp number is their phone number. After WhatsApp usernames, Meta may omit the phone entirely and send only a BSUID like 'MY.2035200694071263' (fields 'wa_id'/'from'/'recipient_id' are omitted when the user has a username and has not interacted for 30 days). A BSUID can send WhatsApp messages but a COURIER CANNOT CALL IT. Therefore: (1) Store TWO separate fields per contact - a canonical id (phone OR bsuid, used for sending WhatsApp and matching the contact) and a reachable phone (always a real phone, may be empty, used for courier/invoice/voice). (2) In phone validation, DETECT and REJECT BSUID - never normalise it. Pattern: /^(?:whatsapp:)?[A-Z]{2}\.(?:ENT\.)?[A-Za-z0-9]{1,128}$/. The usual normaliser replace(/\D/g,'') then prepending a country code turns 'MY.2035200694071263' into '602035200694071263', which LOOKS like a valid Malaysian number, passes naive checks and reaches the courier silently. Return null instead - no number beats a fake one. (3) In the order collection flow, ASK the customer for a phone number as a required field alongside name and address. When we already hold a plausible number, ask them to CONFIRM it (one-word answer, minimal friction): "Boleh sahkan no 012-345 6789 ni untuk kurier WhatsApp atau call ya?". When we have nothing, ask them to provide it: "Boleh bagi no telefon untuk kurier WhatsApp atau call masa hantar ya?". Newest number always wins so corrections stick. (4) When pushing to WooCommerce or any ERP, send the REAL phone as billing.phone and keep the canonical id in a SEPARATE meta field so status/tracking webhooks can still match the contact back. Leave billing.phone EMPTY rather than filling it with an id.
 
 CODING & CONFIGURATION RULES:
 - API BASE URL: Securely HARDCODE this official production base URL directly into the system/SDK configuration: https://officialapi.wasapflow.com/bridge/v1
@@ -110,6 +111,7 @@ THE SYSTEM INTEGRATION MUST COVER THESE TWO MAIN PARTS:
 - 📢 PLATFORM NOTICES: Every Bridge API response includes headers 'X-Bridge-Api-Version', 'X-Bridge-Changelog', 'X-Bridge-Notice' and 'X-Bridge-Notice-Level' ('info' | 'action_required' | 'breaking'); every webhook body carries the same inside a 'meta' object. Log these and alert our admins when the level is 'action_required' or 'breaking'.
 - 🤖 REQUIRED — META BUSINESS AGENT STANDBY BANNER: If Meta Business Agent gets enabled on our WhatsApp number, Meta's AI becomes the active handler and Meta STOPS sending 'message.received' to us, sending 'standby.message_received', 'standby.message_echo' and 'standby.message_status' instead. Our automation appears to die with no error and nothing in our logs. Handle this: (1) On ANY event whose name starts with 'standby.' — or where data.standby === true — do NOT auto-reply; sending a message during standby makes our app the active handler and causes two AIs to fight over one conversation. Store it for conversation context only. (2) Raise a PERSISTENT WARNING BANNER in our admin header AND at the top of the inbox, styled as a WARNING (yellow/amber) not an error, with wording: "🤖 Meta Business Agent is answering our customers — not our AI. To take back control, turn it off in WhatsApp Manager → Account tools → Business Agent. Manual chat still works normally." (3) Make raising it IDEMPOTENT — standby events arrive many times a minute. (4) CLEAR it automatically when a normal 'message.received' arrives again, meaning we are the active handler once more.
 - 🔍 LOG UNRECOGNISED WEBHOOK EVENTS: Our webhook handler will be a chain of checks on the event name, which means any NEW event Bridge or Meta introduces falls through SILENTLY - no error, no log, nothing, and we find out months later when a client reports something odd. Add a final fallback branch: if an incoming event name is not one we explicitly handle, log it ONCE with the full payload, then throttle repeats (e.g. log again only at 2, 4, 8, 16 occurrences so a high-volume event cannot flood the logs). This is how we learn about new Meta capabilities in days instead of months.
+- 📞 PHONE NUMBER IS NOT THE WHATSAPP ID (REQUIRED by Meta): Do NOT assume a customer's WhatsApp number is their phone number. After WhatsApp usernames, Meta may omit the phone entirely and send only a BSUID like 'MY.2035200694071263' (fields 'wa_id'/'from'/'recipient_id' are omitted when the user has a username and has not interacted for 30 days). A BSUID can send WhatsApp messages but a COURIER CANNOT CALL IT. Therefore: (1) Store TWO separate fields per contact - a canonical id (phone OR bsuid, used for sending WhatsApp and matching the contact) and a reachable phone (always a real phone, may be empty, used for courier/invoice/voice). (2) In phone validation, DETECT and REJECT BSUID - never normalise it. Pattern: /^(?:whatsapp:)?[A-Z]{2}\.(?:ENT\.)?[A-Za-z0-9]{1,128}$/. The usual normaliser replace(/\D/g,'') then prepending a country code turns 'MY.2035200694071263' into '602035200694071263', which LOOKS like a valid Malaysian number, passes naive checks and reaches the courier silently. Return null instead - no number beats a fake one. (3) In the order collection flow, ASK the customer for a phone number as a required field alongside name and address. When we already hold a plausible number, ask them to CONFIRM it (one-word answer, minimal friction): "Boleh sahkan no 012-345 6789 ni untuk kurier WhatsApp atau call ya?". When we have nothing, ask them to provide it: "Boleh bagi no telefon untuk kurier WhatsApp atau call masa hantar ya?". Newest number always wins so corrections stick. (4) When pushing to WooCommerce or any ERP, send the REAL phone as billing.phone and keep the canonical id in a SEPARATE meta field so status/tracking webhooks can still match the contact back. Leave billing.phone EMPTY rather than filling it with an id.
 
 CODING & CONFIGURATION RULES:
 - API BASE URL: Securely HARDCODE this official production base URL directly into our system/SDK configuration: https://officialapi.wasapflow.com/bridge/v1
@@ -174,6 +176,13 @@ STEP 3 - IMPLEMENT, in this order, only after I approve:
   (d) UNRECOGNISED EVENT LOGGING - closes the blind spot permanently.
       Our webhook handler is a chain of checks on the event name, so any new event falls through SILENTLY. Add a final fallback branch: if an event name is not one we explicitly handle, log it ONCE with the full payload, then throttle repeats (log again only at 2, 4, 8, 16 occurrences so a high-volume event cannot flood the logs).
 
+  (e) PHONE IDENTITY SPLIT - required by Meta, and it silently corrupts delivery data.
+      Check whether we assume the customer's WhatsApp number is their phone number. After WhatsApp usernames, Meta may send only a BSUID ('MY.2035200694071263') with no phone at all. A BSUID sends WhatsApp fine but a courier cannot call it.
+      First, inspect our phone normaliser. If it does replace(/\D/g,'') before validating, feed it a BSUID: it returns '602035200694071263', a value that looks like a real Malaysian number, passes validation and reaches the courier with no error and nothing in the logs. Fix it to DETECT and REJECT BSUID (/^(?:whatsapp:)?[A-Z]{2}\.(?:ENT\.)?[A-Za-z0-9]{1,128}$/) and return null.
+      Then split the contact's single phone field into two: a canonical id (phone OR bsuid - for sending WhatsApp and matching the contact back) and a reachable phone (always a real phone, may be empty - for courier, invoices, voice). Backfill the reachable phone from existing contacts whose id is already a real phone, so current customers are never asked again.
+      Add a phone number as a required field in the order collection flow. If we already hold a plausible number ask the customer to CONFIRM it rather than retype it, to keep friction to a one-word answer.
+      Where we push orders onward (WooCommerce/ERP/courier), send the real phone as billing.phone and keep the canonical id in a separate meta field so tracking webhooks still match. Leave billing.phone empty rather than filling it with an id.
+
 RULES:
 - Do not change our API base URL, credentials handling, or signature verification. Those already work.
 - All new webhook fields are OPTIONAL and additive. Null-check everything; never assume a field is present.
@@ -230,7 +239,7 @@ As a WasapFlow Bridge Partner, you get access to WhatsApp Cloud API infrastructu
 | **Bridge API** | Full WhatsApp API access via REST endpoints |
 | **WABA Management** | Register and manage unlimited client WhatsApp accounts |
 | **Real-time Logs** | Request logs with status, duration, and error details |
-| **Billing Dashboard** | Pay-as-you-go invoices — $1 USD per WABA per month |
+| **Billing Dashboard** | Slot invoices — $10 USD per month for every 3 WABAs |
 | **SDKs** | Official Node.js, Python, and PHP client libraries |
 
 ---
@@ -1069,24 +1078,26 @@ Each log row shows:
 
 ---
 
-## Billing — Pay As You Go
+## Billing — WABA Slots
 
 ### How it works
-- **{{TRIAL_DAYS}}-day free trial** from registration — full API access, no charge
-- After trial, subscribe via Stripe (credit card required)
-- Billed monthly based on **peak number of WABAs** during billing period
-- Add or remove WABAs freely — Stripe tracks the maximum
+- **Creating an account is free** — no credit card, no expiry
+- Save a card when you are ready; nothing is charged at that point
+- Your **first WABA opens a slot**: $10.00 is charged that day and your monthly cycle starts from that date
+- One slot holds **3 active WABAs**. The 4th WABA opens a second slot, prorated for the rest of the cycle
+- Removing WABAs lowers your slot count from the next cycle; days already paid are not refunded
 
 ### Pricing
-| Item | Amount |
-|------|--------|
-| Per WABA / month | **$1.00 USD** (net) |
-| + Stripe processing fee | ~3.4% + $0.30 (passed through) |
-| **Example: 5 WABAs** | ≈ $5.46/month |
-| **Example: 20 WABAs** | ≈ $21.00/month |
+| Active WABAs | Slots | Per month |
+|------|------|------|
+| 0 | 0 | **Free** |
+| 1 – 3 | 1 | **$10.00 USD** (net) |
+| 4 – 6 | 2 | $20.00 USD |
+| 7 – 9 | 3 | $30.00 USD |
+| + Stripe processing fee | | $0.31 flat, per invoice |
 
 ### Managing billing
-- **Subscribe** — click "Subscribe Pay-as-you-go" in Billing page
+- **Save card** — click "Save Card" in the Billing page. Nothing is charged until your first WABA
 - **Update card / download invoices** — click "Manage Billing" → Stripe Customer Portal
 - **Payment failed** — API is blocked immediately. Click "Pay Now" link in dashboard to pay outstanding invoice and restore access
 
@@ -1180,7 +1191,7 @@ async function sendWithRetry(fn, maxRetries = 3) {
 | `400` | — | `#130429` | Meta rate limit (per WABA) | Slow down sending |
 | `400` | — | `#131047` | Re-engagement window expired | Can only reply 24h after last customer message for free-form text |
 | `401` | `INVALID_KEY` | — | Invalid partner key | Check `x-partner-key` header |
-| `402` | `PAYMENT_REQUIRED` | — | Trial expired or payment failed | Subscribe or pay outstanding invoice |
+| `402` | `PAYMENT_REQUIRED` / `CARD_REQUIRED` | — | No card saved, or payment failed | Save a card, or pay the outstanding invoice |
 | `403` | `SUBSCRIPTION_CANCELLED` | — | Account cancelled | Resubscribe via Billing page |
 | `429` | `RATE_LIMIT` | — | WasapFlow rate limit hit | Reduce request rate or contact support |
 | `500` | `META_ERROR` | — | Meta API error | Retry — if persistent, check Meta status page |
@@ -1192,8 +1203,8 @@ async function sendWithRetry(fn, maxRetries = 3) {
 **Q: Can I register multiple phone numbers under one WABA?**  
 A: One WABA registration in WasapFlow corresponds to one phone number ID. If your client has multiple numbers, register each separately.
 
-**Q: What happens when trial ends?**  
-A: API access continues for 24 hours after trial expiry, then is blocked until you subscribe. You won't lose your registered WABAs — they're restored immediately after payment.
+**Q: What does it cost to start?**  
+A: Nothing. A partner account is free and never expires. You pay $10 only when you connect your first client WABA, and that slot covers up to 3 WABAs.
 
 **Q: Can I remove a WABA and add it back later?**  
 A: Yes. Removing a WABA stops new API access for that WABA immediately, but **if it was active at any point during the billing month, it still counts toward your peak WABA count** for that invoice. Re-registering restores full access. Re-registering the same WABA ID in the same month does not increase peak beyond what was already recorded.
