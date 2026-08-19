@@ -1,6 +1,6 @@
 # WasapFlow Bridge — Partner Getting Started Guide
 
-**Version:** 2.6.1  
+**Version:** 2.7.0  
 **Last Updated:** 11 August 2026
 
 > ⚠️ **Meta pricing change — effective 1 October 2026.** Service messages (non-template replies inside the 24-hour customer service window) and utility templates sent inside that window become billable. **Nothing about how you send changes** — service messages still need no template and no Meta pre-approval. Meta publishes the new rates by 1 September 2026. See [Meta Pricing — What Changes on 1 October 2026](#meta-pricing--what-changes-on-1-october-2026) below, and the [Changelog](?tab=changelog).
