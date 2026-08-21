@@ -165,12 +165,20 @@ The API does NOT return that and never did. It returns snake_case, everywhere, i
 
 That camelCase shape came from an old client library, not from the API. If any of our code was written against that example, it is reading properties that are never present and storing undefined - with no error, no exception, and nothing in the logs. A WABA can appear to register successfully while we save nothing usable about it.
 
-Search our whole codebase for these, case-sensitively, in any code that touches a Bridge response:
+Search our codebase case-sensitively for these names:
     .wabaId    .phoneNumberId    .displayName    .qualityRating    .messagingTier    .registeredAt    .accessToken
 
-Every hit is a bug. Replace with waba_id, phone_number_id, display_name, quality_rating, messaging_limit_tier (or tier), registered_at, access_token.
+IMPORTANT - most hits will NOT be bugs, and you must not blind-replace them. These names appear legitimately in our own code: ORM/Prisma model fields, database columns, local variables, and unrelated third-party objects. Renaming those would break the build and change our schema.
 
-Then check the damage: query our database for client/WABA rows where the id or display name column is NULL or empty but the row exists. Those were created by the broken path and need backfilling from GET /clients, which returns the correct snake_case shape.
+The test is not the NAME, it is WHERE THE VALUE CAME FROM. A hit is a bug only if the object being read is a response body from officialapi.wasapflow.com/bridge/v1 - directly, or via a variable assigned from one. For each hit, trace the object back to its source and classify it:
+    [BUG]  it is a Bridge response (or derived from one) -&gt; switch to waba_id, phone_number_id, display_name, quality_rating, messaging_limit_tier (or tier), registered_at, access_token
+    [OK]   it is our own model, column, variable or an unrelated library -&gt; leave it exactly as it is
+
+If we already read snake_case first with camelCase only as a fallback - for example `match.waba_id ?? match.wabaId` - that is [OK] and correct. It cannot store undefined from this bug, because the real field is read first. You may leave the fallback in place; it is harmless.
+
+Report the hits as a table with the classification and the source you traced, so the reasoning is visible. Do not change anything you classified [OK].
+
+If and only if you classified something [BUG], check the damage it did: query our database for client/WABA rows where the id or display-name column is NULL or empty while the row exists. Those were written by the broken path and need backfilling from GET /clients, which returns the correct snake_case shape. If nothing was classified [BUG], run the query anyway to confirm it comes back clean, then report STEP 0 as [DONE] and move on.
 
 Report what you found before moving on.
 STEP 1 - AUDIT. Do not write any code yet.

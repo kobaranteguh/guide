@@ -1,0 +1,132 @@
+Our system is ALREADY integrated with the WasapFlow Bridge API and is running in production. Do NOT rebuild it. Update only what is missing.
+
+Read these two documents, changelog first:
+
+- https://raw.githubusercontent.com/kobaranteguh/changelog/main/README.md
+- https://raw.githubusercontent.com/kobaranteguh/api/main/README.md
+
+STEP 0 - CHECK THIS FIRST. It takes two minutes and it is the only item on this list that is ALREADY BROKEN rather than merely missing.
+
+Our documentation was wrong for a period. It showed POST /clients/register returning camelCase:
+
+    { "client": { "wabaId": "...", "phoneNumberId": "...", "displayName": "...", "qualityRating": "...", "registeredAt": "..." } }
+
+The API does NOT return that and never did. It returns snake_case, everywhere, in every request and every response:
+
+    { "client": { "id": 42, "waba_id": "...", "phone_number_id": "...", "display_name": "...", "quality_rating": "...", "tier": "...", "messaging_limit_tier": "...", "status": "active", "registered_at": "..." } }
+
+That camelCase shape came from an old client library, not from the API. If any of our code was written against that example, it is reading properties that are never present and storing undefined - with no error, no exception, and nothing in the logs. A WABA can appear to register successfully while we save nothing usable about it.
+
+Search our codebase case-sensitively for these names:
+    .wabaId    .phoneNumberId    .displayName    .qualityRating    .messagingTier    .registeredAt    .accessToken
+
+IMPORTANT - most hits will NOT be bugs, and you must not blind-replace them. These names appear legitimately in our own code: ORM/Prisma model fields, database columns, local variables, and unrelated third-party objects. Renaming those would break the build and change our schema.
+
+The test is not the NAME, it is WHERE THE VALUE CAME FROM. A hit is a bug only if the object being read is a response body from officialapi.wasapflow.com/bridge/v1 - directly, or via a variable assigned from one. For each hit, trace the object back to its source and classify it:
+    [BUG]  it is a Bridge response (or derived from one) -> switch to waba_id, phone_number_id, display_name, quality_rating, messaging_limit_tier (or tier), registered_at, access_token
+    [OK]   it is our own model, column, variable or an unrelated library -> leave it exactly as it is
+
+If we already read snake_case first with camelCase only as a fallback - for example `match.waba_id ?? match.wabaId` - that is [OK] and correct. It cannot store undefined from this bug, because the real field is read first. You may leave the fallback in place; it is harmless.
+
+Report the hits as a table with the classification and the source you traced, so the reasoning is visible. Do not change anything you classified [OK].
+
+If and only if you classified something [BUG], check the damage it did: query our database for client/WABA rows where the id or display-name column is NULL or empty while the row exists. Those were written by the broken path and need backfilling from GET /clients, which returns the correct snake_case shape. If nothing was classified [BUG], run the query anyway to confirm it comes back clean, then report STEP 0 as [DONE] and move on.
+
+Report what you found before moving on.
+STEP 1 - AUDIT. Do not write any code yet.
+
+Read the changelog and list every change since version 2.1.0. The current version is 2.9.0 and it added 32 endpoints, so expect items (g) through (k) below to be the bulk of what is missing. Then inspect our codebase and classify each one as:
+  [DONE]    - already implemented correctly
+  [PARTIAL] - present but incomplete or wrong
+  [MISSING] - not implemented at all
+
+Check our webhook handler specifically for:
+  - Do we read `data.pricing` on message status events? (`pricing.billable`, `pricing.pricing_model`, `pricing.type`, `pricing.category`)
+  - Do we read `data.conversation.origin`?
+  - Do we handle any event whose name starts with `standby.`?
+  - Do we auto-reply to inbound messages without checking whether we are in standby?
+  - Do we read the `X-Bridge-Notice-Level` response header anywhere?
+  - Do we log webhook events whose names we do not recognise, or do they fall through silently?
+  - Does ANY of our code read camelCase properties off a Bridge response? (see STEP 0 - this one is already broken, not merely missing)
+
+STEP 2 - REPORT. Show me the audit as a table before writing anything. Tell me which items are missing and roughly how much work each is. WAIT for my approval.
+
+STEP 3 - IMPLEMENT, in this order, only after I approve:
+
+  (a) COST TRACKING - highest priority, deadline-driven.
+      Meta starts charging on 1 October 2026 for messages that are free today. Every message status webhook carries an OPTIONAL `data.pricing` object; treat it as null-safe because Meta omits it on some events (commonly `read`). Persist all of its fields per message, plus `data.conversation.origin`.
+      Messages where `pricing.type === "free_customer_service"` are EXACTLY the ones that become billable on 1 October. Build a monthly report grouped by `pricing.type` and `pricing.category` so each client can see their exposure before the charge starts.
+      Data not captured before 1 October cannot be recovered afterwards, which is why this is first.
+      Do NOT hardcode any rate. Meta publishes rates by 1 September 2026 and they differ by country.
+
+  (b) STANDBY BANNER - prevents a support-ticket storm.
+      If a client enables Meta Business Agent on their number, Meta's AI becomes the active handler and STOPS sending us `message.received`, sending `standby.message_received`, `standby.message_echo` and `standby.message_status` instead. The client's automation appears dead: no error, nothing in our logs, because the messages never reach us.
+      1. On ANY event whose name starts with `standby.` (or where `data.standby === true`), do NOT auto-reply. Sending a message during standby makes our app the active handler and causes two AIs to fight over one conversation. Store it for conversation context only.
+      2. Raise a PERSISTENT WARNING BANNER for that client, in the app header AND at the top of that number's inbox. Style it as a WARNING (yellow/amber), not an error - nothing is broken. Wording: "Meta Business Agent is answering your customers - not your AI. To take back control, turn it off in WhatsApp Manager > Account tools > Business Agent. Manual chat still works normally."
+      3. Make raising it IDEMPOTENT - standby events arrive many times a minute, so create/update one alert record per phone_number_id rather than notifying per event.
+      4. CLEAR it automatically when a normal `message.received` arrives again for that number.
+
+  (c) PLATFORM NOTICE HEADERS - early warning for the next Meta change.
+      Every Bridge API response carries `X-Bridge-Api-Version`, `X-Bridge-Changelog`, `X-Bridge-Notice` (comma-separated stable notice IDs) and `X-Bridge-Notice-Level` (`info` | `action_required` | `breaking`). Every webhook body carries the same inside a `meta` object.
+      Log these and alert our admins when the level is `action_required` or `breaking`. Notice IDs are stable, so allow suppressing ones we have already handled. This is how we hear about the NEXT Meta change before it takes effect instead of after.
+
+  (d) UNRECOGNISED EVENT LOGGING - closes the blind spot permanently.
+      Our webhook handler is a chain of checks on the event name, so any new event falls through SILENTLY. Add a final fallback branch: if an event name is not one we explicitly handle, log it ONCE with the full payload, then throttle repeats (log again only at 2, 4, 8, 16 occurrences so a high-volume event cannot flood the logs).
+
+  (e) PHONE IDENTITY SPLIT - required by Meta, and it silently corrupts delivery data.
+      Check whether we assume the customer's WhatsApp number is their phone number. After WhatsApp usernames, Meta may send only a BSUID ('MY.2035200694071263') with no phone at all. A BSUID sends WhatsApp fine but a courier cannot call it.
+      First, inspect our phone normaliser. If it does replace(/\D/g,'') before validating, feed it a BSUID: it returns '602035200694071263', a value that looks like a real Malaysian number, passes validation and reaches the courier with no error and nothing in the logs. Fix it to DETECT and REJECT BSUID (/^(?:whatsapp:)?[A-Z]{2}\.(?:ENT\.)?[A-Za-z0-9]{1,128}$/) and return null.
+      Then split the contact's single phone field into two: a canonical id (phone OR bsuid - for sending WhatsApp and matching the contact back) and a reachable phone (always a real phone, may be empty - for courier, invoices, voice). Backfill the reachable phone from existing contacts whose id is already a real phone, so current customers are never asked again.
+      Add a phone number as a required field in the order collection flow. If we already hold a plausible number ask the customer to CONFIRM it rather than retype it, to keep friction to a one-word answer.
+      Where we push orders onward (WooCommerce/ERP/courier), send the real phone as billing.phone and keep the canonical id in a separate meta field so tracking webhooks still match. Leave billing.phone empty rather than filling it with an id.
+
+  (f) SEND TO BSUID - unblocks replies to username customers.
+      Check whether our send calls can address a customer we hold no phone number for. Bridge 2.5.0 accepts the recipient under 'to', 'user_id' or 'recipient' on every send endpoint including broadcasts, and routes a BSUID correctly whichever field carries it - so passing the canonical id in 'to' is enough and no branching is needed. When a phone number and a BSUID are both passed the phone number wins, so this cannot change existing behaviour.
+      If we are pinned to Bridge 2.4.0, we MUST use 'recipient': on 2.4.0 a BSUID in 'to' was sent to Meta's phone field, stripped to digits, and failed with 131026 'Message undeliverable' after Bridge had already answered 2xx - a silent non-delivery that looks like success.
+      Check we record the wamid from every send response. It is returned as BOTH 'message_id' and 'messages[0].id' (same value). Every delivery callback is keyed on it; without it a 'message.failed' cannot be matched and undelivered messages sit at 'sent' forever.
+      Two traps: (1) a send to a BSUID returns contacts[0].user_id and NO wa_id - fix any code that reads wa_id from a send response to record the recipient; (2) Meta REJECTS BSUID recipients for one-tap, zero-tap and copy-code AUTHENTICATION templates, permanently - Bridge 2.5.0 answers HTTP 400 AUTH_TEMPLATE_NEEDS_PHONE, which must not be retried, so OTP and verification flows must keep collecting a real phone number.
+
+  (g) STOP WORKING AROUND ENDPOINTS THAT NOW EXIST - Bridge 2.9.0 added 32 of them.
+      Before 2.9.0 Bridge exposed 13 of Meta's ~38 Cloud API surfaces, so integrations built workarounds or emailed WasapFlow support to run calls by hand. Search our codebase for both patterns and replace them.
+      Search for: any direct call to graph.facebook.com (we should never call Meta directly - we do not hold the token), any TODO or comment saying "not supported by Bridge" / "ask WasapFlow" / "do this in WhatsApp Manager", and any admin instruction telling staff to log into WhatsApp Manager.
+      These now exist. All take the same auth as every other call (x-partner-key + x-waba-id):
+        QR codes and short links       GET POST /qr-codes, PUT DELETE /qr-codes/{code}
+        Ice breakers and /commands     GET POST /conversational-automation
+        Block and unblock users        GET POST DELETE /blocked
+        Catalog and cart visibility    GET POST /commerce-settings
+        Call settings and No-Storage   GET POST /settings
+        Number status                  GET /phone-status  (Official Business Account, 2FA on/off, display-name review)
+        WABA details and health        GET /waba          (health_status says WHY sends are blocked)
+        Audit log                      GET /waba/activities  (who changed what and when)
+        BM users on a WABA             GET /waba/assigned-users
+        Scheduled changes              GET /schedules
+        Flows, read-only               GET /flows, GET /flows/{id}
+        Number lifecycle               POST /phone/request-code, /phone/verify-code, /phone/two-step, /phone/register, /phone/deregister
+        Calling                        POST /calls
+        Groups                         GET POST /groups, GET DELETE /groups/{id}, DELETE /groups/{id}/participants
+      Two specific wins worth checking for. If we ever tell a client "we cannot hide your catalog" or "turn the cart off in WhatsApp Manager", that is now POST /commerce-settings. If we generate wa.me links by hand for posters or shop signage, POST /qr-codes gives a real QR image plus a short link, and PUT changes the message WITHOUT changing the image - printed material stays valid.
+
+  (h) TWO-STEP PIN - fixes a failure that only appears during a recovery.
+      Bridge needs the two-step verification PIN to re-register a number after a migration or a recovery. Before 2.9.0 WasapFlow held only ONE platform PIN, so if we (or our client) ever changed a PIN in WhatsApp Manager, their re-registration broke SILENTLY - and nobody found out until a recovery was already in progress.
+      Action: if any of our numbers has ever had its PIN changed outside Bridge, call POST /phone/two-step once per number with that PIN. Bridge stores it encrypted against the client and uses it before falling back to the platform PIN. If we manage PINs ourselves, set them through this endpoint from now on instead of WhatsApp Manager.
+
+  (i) IRREVERSIBLE ACTIONS NEED A CONFIRM FLAG - do not retry-loop these.
+      POST /phone/deregister and DELETE /groups/{id} require {"confirm": true} in the body and answer 400 CONFIRMATION_REQUIRED without it. Do NOT "fix" a CONFIRMATION_REQUIRED by adding the flag inside a generic retry wrapper - that defeats the point. Surface it to a human. Deregistering stops the number receiving messages immediately.
+      Also do not put /phone/request-code in a retry loop. Repeatedly requesting verification codes gets the number blocked from requesting more.
+
+  (j) READ META ERROR CODES INSTEAD OF PARSING MESSAGE TEXT.
+      Error responses now carry meta_code, meta_subcode and details alongside message. If our error handling does string matching on the message text, switch it to meta_code. The code is what separates "retry this" from "never retry this", and Meta rewords messages without warning.
+      Handle these specifically:
+        131047 - re-engagement required (the user has not messaged in 24h). Not retryable now; retry only after they message again.
+        131000 - "Something went wrong". On any /groups call this almost always means Groups is NOT ENABLED on that number by Meta. It is not a Bridge fault and not retryable - tell the client to ask Meta to enable Groups.
+        131062 - AUTHENTICATION template sent to a BSUID. Permanent. Collect a real phone number.
+      On POST /blocked and DELETE /blocked, an HTTP 200 does NOT mean every number succeeded. Meta reports per-number failures in a failed array alongside blocked/unblocked. Read both arrays. Also enforce Meta's limits before calling: only users who messaged in the last 24 hours can be blocked, max 1,000 per request, 64,000 on the blocklist.
+
+  (k) GRAPH API v26.0 - informational, no action needed.
+      WasapFlow moved its outbound calls AND all 32 webhook fields from Graph API v24.0 to v26.0 on 21 August 2026. Bridge normalises every webhook into its own event envelope and its own response shapes, so Meta's version was never visible to our integration and nothing changes for us. Do not add a version field to our calls; Bridge owns it. This is listed only so the version in support tickets and error traces makes sense.
+
+RULES:
+- Do not change our API base URL, credentials handling, or signature verification. Those already work.
+- All new webhook fields are OPTIONAL and additive. Null-check everything; never assume a field is present.
+- Keep returning HTTP 200 from the webhook endpoint within 10 seconds, before background processing.
+- Show me a diff of each file you change. Do not refactor unrelated code.
