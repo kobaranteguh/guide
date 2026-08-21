@@ -74,8 +74,8 @@ The system architecture must be divided into TWO main sections (Superadmin/Partn
 - 🌐 DO NOT SET A GRAPH API VERSION ANYWHERE: Bridge owns it and currently calls Meta on v26.0, with all 32 webhook fields on v26.0 too. Bridge normalises every webhook into its own event envelope, so Meta's version is never visible to us. Never call graph.facebook.com directly - we do not hold the Meta token, Bridge does.
 
 CODING & CONFIGURATION RULES:
-- API BASE URL: Securely HARDCODE this official production base URL directly into the system/SDK configuration: https://officialapi.wasapflow.com/bridge/v1
-- Use the official WasapFlow Bridge SDK (Node.js/Python/PHP depending on this project's stack).
+- API BASE URL: Securely HARDCODE this official production base URL directly into the system configuration: https://officialapi.wasapflow.com/bridge/v1
+- THERE IS NO WASAPFLOW SDK. Do not run npm install / pip install / composer require for one, and do not invent an import for it. Bridge is plain REST: two headers (x-partner-key, and x-waba-id on anything acting on a specific client's number), JSON in, JSON out. Use whatever HTTP client this project already has - fetch, axios, Guzzle, requests, httpx. Write ONE small wrapper function that takes (path, method, wabaId, body) and reuse it for all 68 endpoints; that is the whole abstraction needed.
 - The webhook listener must ALWAYS immediately return an HTTP 200 OK response within 10 seconds before initiating asynchronous background processing to prevent webhook retries.
 - Never hardcode or expose any Meta permanent access tokens (EAAxxxx) on the frontend. All token exchanges and handshakes must remain strictly server-to-server via WasapFlow Bridge."</code></pre>
 </div>
@@ -128,8 +128,8 @@ THE SYSTEM INTEGRATION MUST COVER THESE TWO MAIN PARTS:
 - 🌐 DO NOT SET A GRAPH API VERSION ANYWHERE: Bridge owns it and currently calls Meta on v26.0, with all 32 webhook fields on v26.0 too. Bridge normalises every webhook into its own event envelope, so Meta's version is never visible to us. Never call graph.facebook.com directly - we do not hold the Meta token, Bridge does.
 
 CODING & CONFIGURATION RULES:
-- API BASE URL: Securely HARDCODE this official production base URL directly into our system/SDK configuration: https://officialapi.wasapflow.com/bridge/v1
-- Use the official WasapFlow Bridge SDK (Node.js/Python/PHP depending on this project's stack).
+- API BASE URL: Securely HARDCODE this official production base URL directly into our system configuration: https://officialapi.wasapflow.com/bridge/v1
+- THERE IS NO WASAPFLOW SDK. Do not run npm install / pip install / composer require for one, and do not invent an import for it. Bridge is plain REST: two headers (x-partner-key, and x-waba-id on anything acting on a specific client's number), JSON in, JSON out. Use whatever HTTP client this project already has - fetch, axios, Guzzle, requests, httpx. Write ONE small wrapper function that takes (path, method, wabaId, body) and reuse it for all 68 endpoints; that is the whole abstraction needed.
 - The webhook listener must ALWAYS immediately return an HTTP 200 OK response within 10 seconds before initiating any background processing to prevent webhook timeout retries.
 - Never hardcode or expose any Meta permanent access tokens (EAAxxxx) on the frontend. All token exchanges and handshakes must remain strictly server-to-server via WasapFlow Bridge.</code></pre>
 </div>
@@ -301,7 +301,7 @@ As a WasapFlow Bridge Partner, you get access to WhatsApp Cloud API infrastructu
 | **WABA Management** | Register and manage unlimited client WhatsApp accounts |
 | **Real-time Logs** | Request logs with status, duration, and error details |
 | **Billing Dashboard** | Slot invoices — $10 USD per month for every 3 WABAs |
-| **SDKs** | Official Node.js, Python, and PHP client libraries |
+| **No SDK needed** | Plain REST — use the HTTP client your stack already has |
 
 ---
 
@@ -321,32 +321,55 @@ API Base URL   : https://officialapi.wasapflow.com/bridge/v1
 
 ---
 
-## Step 2 — Install the SDK
-> **SDK coverage.** The SDKs cover client registration, messaging, templates,
-> media and broadcasts. The 32 surfaces added in 2.9.0 — QR codes, conversational
-> automation, blocking, commerce settings, settings, phone status, WABA
-> diagnostics, Flows, number lifecycle, calling and groups — are **not yet wrapped
-> in the SDKs**. Call them over plain HTTP with the same `x-partner-key` and
-> `x-waba-id` headers; every endpoint is standard REST and needs no SDK. SDK
-> methods will follow.
+## Step 2 — There Is Nothing to Install
 
+**WasapFlow does not ship an SDK.** That is deliberate, not an omission.
 
-### Node.js
-```bash
-npm install github:kobaranteguh/wasapflow-bridge-node
+Bridge is plain REST: two headers, JSON in, JSON out. A client library would be
+one more dependency to version, audit and wait on — and it would lag every time
+we add endpoints, which is exactly what happened before we removed it. Use the
+HTTP client your project already has: `fetch`, `axios`, Guzzle, `requests`,
+`httpx`, `curl`.
+
+**The two headers:**
+
+| Header | Value | When |
+|---|---|---|
+| `x-partner-key` | `wf_your_key` | Every request |
+| `x-waba-id` | The client's WABA id | Every request that acts on a specific client's number |
+
+**Write this once and you are done:**
+
+```javascript
+const BASE = 'https://officialapi.wasapflow.com/bridge/v1';
+
+async function bridge(path, { method = 'GET', wabaId, body } = {}) {
+    const res = await fetch(BASE + path, {
+        method,
+        headers: {
+            'x-partner-key': process.env.WF_PARTNER_KEY,
+            ...(wabaId ? { 'x-waba-id': wabaId } : {}),
+            'Content-Type': 'application/json',
+        },
+        body: body ? JSON.stringify(body) : undefined,
+    });
+    const data = await res.json();
+    if (!data.success) {
+        const e = new Error(`${data.error.code}: ${data.error.message}`);
+        e.code = data.error.code;
+        e.metaCode = data.error.meta_code;   // branch on this, never on message text
+        e.status = res.status;
+        throw e;
+    }
+    return data;
+}
 ```
 
-### Python
-```bash
-pip install git+https://github.com/kobaranteguh/wasapflow-bridge-python.git
-```
+All 68 endpoints work through that one function. Python, PHP and cURL versions
+are in the [API Reference](?tab=api#calling-bridge-from-your-language).
 
-### PHP
-```bash
-composer require kobaranteguh/wasapflow-bridge-php
-```
-
-> **No SDK?** All endpoints are standard REST — you can use `curl`, `axios`, `requests`, or any HTTP client.
+> **All fields are `snake_case`** — requests and responses alike: `waba_id`,
+> `phone_number_id`, `access_token`. There is no camelCase form of this API.
 
 ---
 
@@ -437,30 +460,7 @@ No FB SDK needed on your side. Just open our hosted page as a popup:
 
 This is the easiest way to support Coexistence because WasapFlow automatically launches Meta with `featureType: 'whatsapp_business_app_onboarding'` and registers the result with `connection_mode: 'coexistence'`.
 
-```javascript
-// Your backend returns the connect URL
-// GET /api/whatsapp-connect-url → returns { url }
-// Your server calls: GET /bridge/v1/embedded-signup/config to get app_id/config_id
-// Then construct: https://officialapi.wasapflow.com/bridge/connect?partner_key=wf_xxx&display_name=...
-
-// Frontend — open popup when client clicks "Connect WhatsApp"
-document.getElementById('connectBtn').onclick = async function() {
-    try {
-        // Using Node.js SDK — opens popup automatically
-        const result = await bridge.clients.openEmbeddedSignup({ displayName: 'My Client' });
-        console.log('Connected:', result.waba_id, result.phone_number_id);
-        // Save waba_id to your database
-    } catch (err) {
-        if (err.message.includes('Popup blocked')) {
-            alert('Please allow popups and try again.');
-        } else {
-            alert('Connection failed: ' + err.message);
-        }
-    }
-};
-```
-
-**Without SDK — vanilla JS:**
+**Open the popup from your frontend:**
 ```javascript
 document.getElementById('connectBtn').onclick = async function() {
     const res = await fetch('/api/whatsapp-connect-url'); // your backend
@@ -625,56 +625,56 @@ curl -X POST https://officialapi.wasapflow.com/bridge/v1/clients/register \
   }'
 ```
 
-### Using Node.js SDK:
+### From JavaScript
+
 ```javascript
-const { WasapFlowBridge } = require('wasapflow-bridge-node');
-
-const bridge = new WasapFlowBridge({
-    partnerKey: process.env.WF_PARTNER_KEY,
-    webhookSecret: process.env.WF_WEBHOOK_SECRET,
-    baseUrl: 'https://officialapi.wasapflow.com'
+const data = await bridge('/clients/register', {
+    method: 'POST',
+    body: {
+        waba_id: '123456789',
+        phone_number_id: '987654321',
+        access_token: 'EAAxxxxxxxx',
+        display_name: 'My Client Business',
+    },
 });
-
-const result = await bridge.clients.register({
-    wabaId: '123456789',
-    phoneNumberId: '987654321',
-    accessToken: 'EAAxxxxxxxx',
-    displayName: 'My Client Business'
-});
+console.log(data.client.waba_id);
 ```
 
-### Using Python SDK:
+### From Python
+
 ```python
-from wasapflow_bridge import WasapFlowBridge
+import os, requests
 
-bridge = WasapFlowBridge(
-    partner_key=os.environ['WF_PARTNER_KEY'],
-    base_url='https://officialapi.wasapflow.com'
+res = requests.post(
+    'https://officialapi.wasapflow.com/bridge/v1/clients/register',
+    headers={'x-partner-key': os.environ['WF_PARTNER_KEY']},
+    json={
+        'waba_id': '123456789',
+        'phone_number_id': '987654321',
+        'access_token': 'EAAxxxxxxxx',
+        'display_name': 'My Client Business',
+    },
+    timeout=15,
 )
-
-result = bridge.clients.register(
-    waba_id='123456789',
-    phone_number_id='987654321',
-    access_token='EAAxxxxxxxx',
-    display_name='My Client Business'
-)
+data = res.json()
+if not data.get('success'):
+    raise RuntimeError(f"{data['error']['code']}: {data['error']['message']}")
 ```
 
-### Using PHP SDK:
+### From PHP
+
 ```php
-use WasapFlow\Bridge\WasapFlowBridge;
-
-$bridge = new WasapFlowBridge([
-    'partnerKey' => $_ENV['WF_PARTNER_KEY'],
-    'baseUrl'    => 'https://officialapi.wasapflow.com'
+$res = $http->post('clients/register', [
+    'headers'     => ['x-partner-key' => getenv('WF_PARTNER_KEY')],
+    'json'        => [
+        'waba_id'          => '123456789',
+        'phone_number_id'  => '987654321',
+        'access_token'     => 'EAAxxxxxxxx',
+        'display_name'     => 'My Client Business',
+    ],
+    'http_errors' => false,
 ]);
-
-$result = $bridge->clients->register([
-    'wabaId'        => '123456789',
-    'phoneNumberId' => '987654321',
-    'accessToken'   => 'EAAxxxxxxxx',
-    'displayName'   => 'My Client Business'
-]);
+$data = json_decode((string) $res->getBody(), true);
 ```
 
 **Successful response:**
@@ -682,12 +682,15 @@ $result = $bridge->clients->register([
 {
     "success": true,
     "client": {
-        "wabaId": "123456789",
-        "phoneNumberId": "987654321",
-        "displayName": "My Client Business",
-        "qualityRating": "GREEN",
-        "messagingTier": "TIER_1K",
-        "registeredAt": "2026-05-12T10:00:00Z"
+        "id": 42,
+        "waba_id": "123456789",
+        "phone_number_id": "987654321",
+        "display_name": "My Client Business",
+        "quality_rating": "GREEN",
+        "tier": "TIER_1K",
+        "messaging_limit_tier": "TIER_1K",
+        "status": "active",
+        "registered_at": "2026-05-12T10:00:00Z"
     }
 }
 ```
@@ -965,16 +968,6 @@ If a client's WABA stops receiving webhook events (messages not arriving, delive
 ```bash
 curl -X POST https://officialapi.wasapflow.com/bridge/v1/clients/123456789/resubscribe-webhook \
   -H "x-partner-key: wf_your_partner_key"
-```
-
-```javascript
-// Node.js SDK
-await bridge.clients.resubscribeWebhook('123456789');
-```
-
-```python
-# Python SDK
-bridge.clients.resubscribe_webhook('123456789')
 ```
 
 This re-subscribes the WABA to WasapFlow's Meta webhook endpoint. Safe to call at any time — idempotent.
