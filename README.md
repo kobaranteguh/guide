@@ -1,7 +1,9 @@
 # WasapFlow Bridge — Partner Getting Started Guide
 
-**Version:** 2.8.0  
-**Last Updated:** 11 August 2026
+**Version:** 2.9.0  
+**Last Updated:** 21 August 2026
+
+> 🆕 **New in 2.9.0 — 32 endpoints, 68 in total.** QR codes, ice breakers and `/` commands, blocking, catalog & cart visibility, call settings, number status, WABA audit log, Flows, number lifecycle, calling and groups. See [Endpoints](#endpoints) below. If your integration works around something because "Bridge does not support it", check that list first — it probably does now. Error responses also carry `meta_code` now, so stop matching on message text. **Already integrated? Use [Prompt C](#which-prompt-should-you-use) — it audits your code against these changes.**
 
 > ⚠️ **Meta pricing change — effective 1 October 2026.** Service messages (non-template replies inside the 24-hour customer service window) and utility templates sent inside that window become billable. **Nothing about how you send changes** — service messages still need no template and no Meta pre-approval. Meta publishes the new rates by 1 September 2026. See [Meta Pricing — What Changes on 1 October 2026](#meta-pricing--what-changes-on-1-october-2026) below, and the [Changelog](?tab=changelog).
 
@@ -67,6 +69,9 @@ The system architecture must be divided into TWO main sections (Superadmin/Partn
 - 🪟 HANDLE ALL THREE POPUP OUTCOMES: The connect popup posts back to window.opener on success, cancel AND failure - 'WASAPFLOW_CONNECT_SUCCESS' (waba_id, phone_number_id, display_name, quality_rating, connection_mode), 'WASAPFLOW_CONNECT_CANCEL' (reason) and 'WASAPFLOW_CONNECT_ERROR' (message, code). All three carry the 'state' we passed when minting the link. Verify event.origin is https://officialapi.wasapflow.com, then IGNORE any message whose 'state' does not match the client this UI is connecting - a popup left open for one client must never register against another. Do not leave the UI stuck in a connecting state waiting only for success: before Bridge 2.6.1 cancel and error were never posted at all, so any handler written against an older version never fired. Keep a 'popup.closed' poll as a safety net, since a customer can still close the window before any message is sent.
 - 🔑 NEVER PUT THE PARTNER KEY IN A BROWSER URL: The onboarding link must be created server-side with POST /bridge/v1/connect/session (authenticated with the x-partner-key header), which returns a 'connect_url' carrying a 30-minute token. Open THAT url in the client's browser. Do NOT build '/bridge/connect?partner_key=...' in frontend code or in a link the client can see - partner_key is the full API credential for every WABA and every send, and a URL leaks it into browser history, the Referer header sent to other hosts, and server access logs in plain text. Pass an optional 'state' (max 255 chars) to that endpoint and it is returned untouched when onboarding completes, in the postMessage payload and in the register-from-code response, so the finished connection can be matched to our own client record. If our code currently builds the partner_key link, migrate it and then rotate the key in the partner portal - a key that has been through a browser must be treated as exposed.
 - 📤 SENDING TO A CUSTOMER WITH NO PHONE NUMBER: From Bridge 2.5.0 every send endpoint accepts the recipient under 'to', 'user_id' or 'recipient', and a BSUID is routed correctly whichever you use - so you can simply put the canonical id in 'to' and stop branching. When a phone number and a BSUID are both supplied the phone number wins (Meta's rule). ON 2.4.0 THIS WAS NOT TRUE: a BSUID placed in 'to' was forwarded to Meta's phone field, stripped to digits, and failed with 131026 'Message undeliverable' AFTER Bridge had already returned 2xx - so if you are pinned to 2.4.0 you must use 'recipient'. ALWAYS record the wamid from the send response: it is returned as BOTH 'message_id' and 'messages[0].id' (same value), and every message.sent/delivered/read/failed callback is keyed on it - without it a message.failed cannot be matched to anything and a silent non-delivery looks like success forever. IMPORTANT: a send to a BSUID returns contacts[0].user_id and NO wa_id, so any code reading wa_id from a send response must read user_id for BSUID sends. Meta REJECTS BSUID recipients for one-tap, zero-tap and copy-code AUTHENTICATION templates - Bridge 2.5.0 returns HTTP 400 AUTH_TEMPLATE_NEEDS_PHONE (meta_code 131062, retryable false). This is permanent: do not retry it, collect a real phone number instead.
+- 🔧 DO NOT BUILD WHAT BRIDGE ALREADY EXPOSES: as of 2.9.0 there are 68 endpoints, not the dozen most integrations use. Before writing a workaround or emailing support, check the API reference for: QR codes and short links (/qr-codes), ice breakers and slash-commands (/conversational-automation), blocking spam numbers (/blocked), showing or hiding the catalog and cart (/commerce-settings), call and No-Storage settings (/settings), whether a number is an Official Business Account or has 2FA on (/phone-status), the WABA audit log for 'why did this template disappear' (/waba/activities), and the phone number lifecycle (/phone/request-code, /phone/verify-code, /phone/two-step, /phone/register, /phone/deregister). Irreversible calls need {"confirm": true} or they return 400 CONFIRMATION_REQUIRED. If we have ever changed the two-step PIN outside Bridge, set it once via POST /phone/two-step - otherwise WasapFlow's re-registration of our numbers will fail silently during a recovery.
+- 🚦 READ META ERROR CODES, NOT MESSAGE TEXT: error responses carry meta_code, meta_subcode and details alongside message. Branch on meta_code - Meta rewords messages without warning. Know these three: 131047 re-engagement required (user has not messaged in 24h, retry only after they do), 131062 AUTHENTICATION template to a BSUID (permanent, get a real phone number), and 131000 on any /groups call which means Groups is not enabled on that number by Meta (not a Bridge fault, not retryable). On POST and DELETE /blocked an HTTP 200 does NOT mean every number succeeded - Meta reports per-number failures in a 'failed' array, so read both arrays.
+- 🌐 DO NOT SET A GRAPH API VERSION ANYWHERE: Bridge owns it and currently calls Meta on v26.0, with all 32 webhook fields on v26.0 too. Bridge normalises every webhook into its own event envelope, so Meta's version is never visible to us. Never call graph.facebook.com directly - we do not hold the Meta token, Bridge does.
 
 CODING & CONFIGURATION RULES:
 - API BASE URL: Securely HARDCODE this official production base URL directly into the system/SDK configuration: https://officialapi.wasapflow.com/bridge/v1
@@ -118,6 +123,9 @@ THE SYSTEM INTEGRATION MUST COVER THESE TWO MAIN PARTS:
 - 🪟 HANDLE ALL THREE POPUP OUTCOMES: The connect popup posts back to window.opener on success, cancel AND failure - 'WASAPFLOW_CONNECT_SUCCESS' (waba_id, phone_number_id, display_name, quality_rating, connection_mode), 'WASAPFLOW_CONNECT_CANCEL' (reason) and 'WASAPFLOW_CONNECT_ERROR' (message, code). All three carry the 'state' we passed when minting the link. Verify event.origin is https://officialapi.wasapflow.com, then IGNORE any message whose 'state' does not match the client this UI is connecting - a popup left open for one client must never register against another. Do not leave the UI stuck in a connecting state waiting only for success: before Bridge 2.6.1 cancel and error were never posted at all, so any handler written against an older version never fired. Keep a 'popup.closed' poll as a safety net, since a customer can still close the window before any message is sent.
 - 🔑 NEVER PUT THE PARTNER KEY IN A BROWSER URL: The onboarding link must be created server-side with POST /bridge/v1/connect/session (authenticated with the x-partner-key header), which returns a 'connect_url' carrying a 30-minute token. Open THAT url in the client's browser. Do NOT build '/bridge/connect?partner_key=...' in frontend code or in a link the client can see - partner_key is the full API credential for every WABA and every send, and a URL leaks it into browser history, the Referer header sent to other hosts, and server access logs in plain text. Pass an optional 'state' (max 255 chars) to that endpoint and it is returned untouched when onboarding completes, in the postMessage payload and in the register-from-code response, so the finished connection can be matched to our own client record. If our code currently builds the partner_key link, migrate it and then rotate the key in the partner portal - a key that has been through a browser must be treated as exposed.
 - 📤 SENDING TO A CUSTOMER WITH NO PHONE NUMBER: From Bridge 2.5.0 every send endpoint accepts the recipient under 'to', 'user_id' or 'recipient', and a BSUID is routed correctly whichever you use - so you can simply put the canonical id in 'to' and stop branching. When a phone number and a BSUID are both supplied the phone number wins (Meta's rule). ON 2.4.0 THIS WAS NOT TRUE: a BSUID placed in 'to' was forwarded to Meta's phone field, stripped to digits, and failed with 131026 'Message undeliverable' AFTER Bridge had already returned 2xx - so if you are pinned to 2.4.0 you must use 'recipient'. ALWAYS record the wamid from the send response: it is returned as BOTH 'message_id' and 'messages[0].id' (same value), and every message.sent/delivered/read/failed callback is keyed on it - without it a message.failed cannot be matched to anything and a silent non-delivery looks like success forever. IMPORTANT: a send to a BSUID returns contacts[0].user_id and NO wa_id, so any code reading wa_id from a send response must read user_id for BSUID sends. Meta REJECTS BSUID recipients for one-tap, zero-tap and copy-code AUTHENTICATION templates - Bridge 2.5.0 returns HTTP 400 AUTH_TEMPLATE_NEEDS_PHONE (meta_code 131062, retryable false). This is permanent: do not retry it, collect a real phone number instead.
+- 🔧 DO NOT BUILD WHAT BRIDGE ALREADY EXPOSES: as of 2.9.0 there are 68 endpoints, not the dozen most integrations use. Before writing a workaround or emailing support, check the API reference for: QR codes and short links (/qr-codes), ice breakers and slash-commands (/conversational-automation), blocking spam numbers (/blocked), showing or hiding the catalog and cart (/commerce-settings), call and No-Storage settings (/settings), whether a number is an Official Business Account or has 2FA on (/phone-status), the WABA audit log for 'why did this template disappear' (/waba/activities), and the phone number lifecycle (/phone/request-code, /phone/verify-code, /phone/two-step, /phone/register, /phone/deregister). Irreversible calls need {"confirm": true} or they return 400 CONFIRMATION_REQUIRED. If we have ever changed the two-step PIN outside Bridge, set it once via POST /phone/two-step - otherwise WasapFlow's re-registration of our numbers will fail silently during a recovery.
+- 🚦 READ META ERROR CODES, NOT MESSAGE TEXT: error responses carry meta_code, meta_subcode and details alongside message. Branch on meta_code - Meta rewords messages without warning. Know these three: 131047 re-engagement required (user has not messaged in 24h, retry only after they do), 131062 AUTHENTICATION template to a BSUID (permanent, get a real phone number), and 131000 on any /groups call which means Groups is not enabled on that number by Meta (not a Bridge fault, not retryable). On POST and DELETE /blocked an HTTP 200 does NOT mean every number succeeded - Meta reports per-number failures in a 'failed' array, so read both arrays.
+- 🌐 DO NOT SET A GRAPH API VERSION ANYWHERE: Bridge owns it and currently calls Meta on v26.0, with all 32 webhook fields on v26.0 too. Bridge normalises every webhook into its own event envelope, so Meta's version is never visible to us. Never call graph.facebook.com directly - we do not hold the Meta token, Bridge does.
 
 CODING & CONFIGURATION RULES:
 - API BASE URL: Securely HARDCODE this official production base URL directly into our system/SDK configuration: https://officialapi.wasapflow.com/bridge/v1
@@ -145,7 +153,7 @@ Read these two documents, changelog first:
 
 STEP 1 - AUDIT. Do not write any code yet.
 
-Read the changelog and list every change since version 2.1.0. Then inspect our codebase and classify each one as:
+Read the changelog and list every change since version 2.1.0. The current version is 2.9.0 and it added 32 endpoints, so expect items (g) through (k) below to be the bulk of what is missing. Then inspect our codebase and classify each one as:
   [DONE]    - already implemented correctly
   [PARTIAL] - present but incomplete or wrong
   [MISSING] - not implemented at all
@@ -194,6 +202,45 @@ STEP 3 - IMPLEMENT, in this order, only after I approve:
       If we are pinned to Bridge 2.4.0, we MUST use 'recipient': on 2.4.0 a BSUID in 'to' was sent to Meta's phone field, stripped to digits, and failed with 131026 'Message undeliverable' after Bridge had already answered 2xx - a silent non-delivery that looks like success.
       Check we record the wamid from every send response. It is returned as BOTH 'message_id' and 'messages[0].id' (same value). Every delivery callback is keyed on it; without it a 'message.failed' cannot be matched and undelivered messages sit at 'sent' forever.
       Two traps: (1) a send to a BSUID returns contacts[0].user_id and NO wa_id - fix any code that reads wa_id from a send response to record the recipient; (2) Meta REJECTS BSUID recipients for one-tap, zero-tap and copy-code AUTHENTICATION templates, permanently - Bridge 2.5.0 answers HTTP 400 AUTH_TEMPLATE_NEEDS_PHONE, which must not be retried, so OTP and verification flows must keep collecting a real phone number.
+
+  (g) STOP WORKING AROUND ENDPOINTS THAT NOW EXIST - Bridge 2.9.0 added 32 of them.
+      Before 2.9.0 Bridge exposed 13 of Meta's ~38 Cloud API surfaces, so integrations built workarounds or emailed WasapFlow support to run calls by hand. Search our codebase for both patterns and replace them.
+      Search for: any direct call to graph.facebook.com (we should never call Meta directly - we do not hold the token), any TODO or comment saying "not supported by Bridge" / "ask WasapFlow" / "do this in WhatsApp Manager", and any admin instruction telling staff to log into WhatsApp Manager.
+      These now exist. All take the same auth as every other call (x-partner-key + x-waba-id):
+        QR codes and short links       GET POST /qr-codes, PUT DELETE /qr-codes/{code}
+        Ice breakers and /commands     GET POST /conversational-automation
+        Block and unblock users        GET POST DELETE /blocked
+        Catalog and cart visibility    GET POST /commerce-settings
+        Call settings and No-Storage   GET POST /settings
+        Number status                  GET /phone-status  (Official Business Account, 2FA on/off, display-name review)
+        WABA details and health        GET /waba          (health_status says WHY sends are blocked)
+        Audit log                      GET /waba/activities  (who changed what and when)
+        BM users on a WABA             GET /waba/assigned-users
+        Scheduled changes              GET /schedules
+        Flows, read-only               GET /flows, GET /flows/{id}
+        Number lifecycle               POST /phone/request-code, /phone/verify-code, /phone/two-step, /phone/register, /phone/deregister
+        Calling                        POST /calls
+        Groups                         GET POST /groups, GET DELETE /groups/{id}, DELETE /groups/{id}/participants
+      Two specific wins worth checking for. If we ever tell a client "we cannot hide your catalog" or "turn the cart off in WhatsApp Manager", that is now POST /commerce-settings. If we generate wa.me links by hand for posters or shop signage, POST /qr-codes gives a real QR image plus a short link, and PUT changes the message WITHOUT changing the image - printed material stays valid.
+
+  (h) TWO-STEP PIN - fixes a failure that only appears during a recovery.
+      Bridge needs the two-step verification PIN to re-register a number after a migration or a recovery. Before 2.9.0 WasapFlow held only ONE platform PIN, so if we (or our client) ever changed a PIN in WhatsApp Manager, their re-registration broke SILENTLY - and nobody found out until a recovery was already in progress.
+      Action: if any of our numbers has ever had its PIN changed outside Bridge, call POST /phone/two-step once per number with that PIN. Bridge stores it encrypted against the client and uses it before falling back to the platform PIN. If we manage PINs ourselves, set them through this endpoint from now on instead of WhatsApp Manager.
+
+  (i) IRREVERSIBLE ACTIONS NEED A CONFIRM FLAG - do not retry-loop these.
+      POST /phone/deregister and DELETE /groups/{id} require {"confirm": true} in the body and answer 400 CONFIRMATION_REQUIRED without it. Do NOT "fix" a CONFIRMATION_REQUIRED by adding the flag inside a generic retry wrapper - that defeats the point. Surface it to a human. Deregistering stops the number receiving messages immediately.
+      Also do not put /phone/request-code in a retry loop. Repeatedly requesting verification codes gets the number blocked from requesting more.
+
+  (j) READ META ERROR CODES INSTEAD OF PARSING MESSAGE TEXT.
+      Error responses now carry meta_code, meta_subcode and details alongside message. If our error handling does string matching on the message text, switch it to meta_code. The code is what separates "retry this" from "never retry this", and Meta rewords messages without warning.
+      Handle these specifically:
+        131047 - re-engagement required (the user has not messaged in 24h). Not retryable now; retry only after they message again.
+        131000 - "Something went wrong". On any /groups call this almost always means Groups is NOT ENABLED on that number by Meta. It is not a Bridge fault and not retryable - tell the client to ask Meta to enable Groups.
+        131062 - AUTHENTICATION template sent to a BSUID. Permanent. Collect a real phone number.
+      On POST /blocked and DELETE /blocked, an HTTP 200 does NOT mean every number succeeded. Meta reports per-number failures in a failed array alongside blocked/unblocked. Read both arrays. Also enforce Meta's limits before calling: only users who messaged in the last 24 hours can be blocked, max 1,000 per request, 64,000 on the blocklist.
+
+  (k) GRAPH API v26.0 - informational, no action needed.
+      WasapFlow moved its outbound calls AND all 32 webhook fields from Graph API v24.0 to v26.0 on 21 August 2026. Bridge normalises every webhook into its own event envelope and its own response shapes, so Meta's version was never visible to our integration and nothing changes for us. Do not add a version field to our calls; Bridge owns it. This is listed only so the version in support tickets and error traces makes sense.
 
 RULES:
 - Do not change our API base URL, credentials handling, or signature verification. Those already work.
@@ -248,7 +295,9 @@ As a WasapFlow Bridge Partner, you get access to WhatsApp Cloud API infrastructu
 |---------|-------------|
 | **Partner Key** | Your API authentication key (`x-partner-key` header) |
 | **Webhook Secret** | For verifying incoming webhooks from WasapFlow |
-| **Bridge API** | Full WhatsApp API access via REST endpoints |
+| **Bridge API** | 68 REST endpoints across 24 Meta Cloud API surfaces |
+| **Number tooling** | QR codes, ice breakers & commands, blocking, commerce settings, call settings |
+| **Account visibility** | Phone status (OBA, 2FA, name review), WABA audit log, assigned users |
 | **WABA Management** | Register and manage unlimited client WhatsApp accounts |
 | **Real-time Logs** | Request logs with status, duration, and error details |
 | **Billing Dashboard** | Slot invoices — $10 USD per month for every 3 WABAs |
@@ -273,6 +322,14 @@ API Base URL   : https://officialapi.wasapflow.com/bridge/v1
 ---
 
 ## Step 2 — Install the SDK
+> **SDK coverage.** The SDKs cover client registration, messaging, templates,
+> media and broadcasts. The 32 surfaces added in 2.9.0 — QR codes, conversational
+> automation, blocking, commerce settings, settings, phone status, WABA
+> diagnostics, Flows, number lifecycle, calling and groups — are **not yet wrapped
+> in the SDKs**. Call them over plain HTTP with the same `x-partner-key` and
+> `x-waba-id` headers; every endpoint is standard REST and needs no SDK. SDK
+> methods will follow.
+
 
 ### Node.js
 ```bash
@@ -1132,19 +1189,116 @@ Each log row shows:
 
 ### Endpoints
 
+68 endpoints across 24 Meta Cloud API surfaces. Full request and response detail
+for each is in the [API Reference](?tab=api) — this is the index.
+
+**Clients (WABAs)**
+
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `POST` | `/clients/register` | Register a client WABA (upsert) |
+| `POST` | `/clients/register-from-code` | Register from an Embedded Signup code |
 | `GET` | `/clients` | List all registered WABAs |
 | `DELETE` | `/clients/:wabaId` | Remove a WABA |
-| `POST` | `/clients/:wabaId/refresh` | Refresh WABA quality/tier + optional token update |
+| `POST` | `/clients/:wabaId/refresh` | Refresh quality/tier + optional token update |
 | `POST` | `/clients/:wabaId/resubscribe-webhook` | Reconnect Meta webhook for a WABA |
-| `POST` | `/messages/send` | Send text message |
-| `POST` | `/messages/template` | Send template message |
-| `POST` | `/messages/media` | Send media message |
-| `POST` | `/messages/interactive` | Send interactive buttons/list |
-| `GET` | `/contacts/:phone` | Check if phone is on WhatsApp |
+| `POST` | `/connect/session` | Create a 30-minute onboarding link (**use this, never `?partner_key=`**) |
+| `GET` | `/embedded-signup/config` | Meta App ID + config ID for the JS SDK |
+| `GET` | `/onboarding/events` | Onboarding session log — why a signup failed |
+
+**Messaging**
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/messages/send` | Send text |
+| `POST` | `/messages/template` | Send template |
+| `POST` | `/messages/media` | Send image / document / audio / video |
+| `POST` | `/messages/interactive` | Buttons, lists, catalog & product messages |
+| `POST` | `/messages/location` | Send location |
+| `POST` | `/messages/reaction` | React to a message |
+| `POST` | `/messages/read` | Mark as read |
 | `POST` | `/media/upload` | Upload media to Meta, get `media_id` |
+| `GET` | `/media/:mediaId` | Download media |
+| `GET` | `/contacts/:phone` | Check if a phone is on WhatsApp |
+
+**Templates & broadcasts**
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/templates` | List templates |
+| `POST` | `/templates` | Create a template |
+| `POST` | `/templates/upload-header` | Upload a media header |
+| `DELETE` | `/templates/:templateName` | Delete a template |
+| `POST` | `/broadcasts` | Start a broadcast |
+| `GET` | `/broadcasts` · `/broadcasts/:id` | List / inspect broadcasts |
+| `POST` | `/broadcasts/:id/cancel` | Cancel a running broadcast |
+
+**Number setup — new in 2.9.0**
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` `POST` | `/qr-codes` | List / create QR codes & short links |
+| `PUT` `DELETE` | `/qr-codes/:code` | Change the message (image stays valid) / delete |
+| `GET` `POST` | `/conversational-automation` | Ice breakers, `/` commands, welcome message |
+| `GET` `POST` `DELETE` | `/blocked` | List / block / unblock users |
+| `GET` `POST` | `/commerce-settings` | Show or hide catalog and cart |
+| `GET` `POST` | `/settings` | Call settings and No-Storage mode |
+| `GET` | `/phone-status` | OBA status, 2FA state, display-name review |
+
+**Account & diagnostics — new in 2.9.0**
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/waba` | Account details + `health_status` (why sends are blocked) |
+| `GET` | `/waba/activities` | Audit log — who changed what, and when |
+| `GET` | `/waba/assigned-users` | Which BM users can access this WABA |
+| `GET` | `/waba/solutions` | Solutions attached to this WABA |
+| `GET` | `/schedules` | Pending scheduled changes |
+| `GET` | `/flows` · `/flows/:flowId` | List / inspect Flows (read-only) |
+| `GET` | `/usage` | Your own usage and billing counters |
+| `GET` | `/analytics` | Message analytics |
+| `GET` | `/health` | Service health (no auth) |
+
+**Number lifecycle — new in 2.9.0, changes the number itself**
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/phone/request-code` | Request an SMS/voice verification code |
+| `POST` | `/phone/verify-code` | Submit the code |
+| `POST` | `/phone/two-step` | Set the 2FA PIN (**see the warning below**) |
+| `POST` | `/phone/register` | Re-register the number |
+| `POST` | `/phone/deregister` | Deregister — needs `{"confirm": true}` |
+
+> ⚠️ **If you have ever changed a two-step PIN outside Bridge**, set it once via
+> `POST /phone/two-step`. Bridge needs that PIN to re-register a number during a
+> migration or recovery. Before 2.9.0 we only held one platform PIN, so a PIN
+> changed in WhatsApp Manager broke our re-registration **silently** — and you
+> only found out during a recovery, when it mattered most.
+
+**Calling & groups — new in 2.9.0**
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/calls` | `connect`, `pre_accept`, `accept`, `reject`, `terminate` |
+| `GET` `POST` | `/groups` | List / create groups |
+| `GET` | `/groups/:groupId` | Group info |
+| `DELETE` | `/groups/:groupId` | Delete a group — needs `{"confirm": true}` |
+| `DELETE` | `/groups/:groupId/participants` | Remove participants (max 8) |
+
+> Calling needs `calling.status: "ENABLED"` via `POST /settings` first, and the
+> customer's permission for business-initiated calls.
+>
+> **Groups must be enabled on your number by Meta.** If it is not, Meta answers
+> `131000 "Something went wrong"` — a message that explains nothing. We confirmed
+> this against a live WABA. That is not a Bridge fault; Bridge passes Meta's status
+> through unchanged.
+
+**Webhook recovery**
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/webhooks/failed` | Events we could not deliver to you |
+| `POST` | `/webhooks/retry/:eventId` · `/webhooks/retry-all` | Redeliver |
 
 ---
 
