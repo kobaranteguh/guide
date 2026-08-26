@@ -1,7 +1,7 @@
 # WasapFlow Bridge — Partner Getting Started Guide
 
-**Version:** 2.9.0  
-**Last Updated:** 21 August 2026
+**Version:** 2.9.1  
+**Last Updated:** 27 August 2026
 
 > 🆕 **New in 2.9.0 — 32 endpoints, 68 in total.** QR codes, ice breakers and `/` commands, blocking, catalog & cart visibility, call settings, number status, WABA audit log, Flows, number lifecycle, calling and groups. See [Endpoints](#endpoints) below. If your integration works around something because "Bridge does not support it", check that list first — it probably does now. Error responses also carry `meta_code` now, so stop matching on message text. **Already integrated? Use [Prompt C](#which-prompt-should-you-use) — it audits your code against these changes.**
 
@@ -1236,6 +1236,7 @@ for each is in the [API Reference](?tab=api) — this is the index.
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `POST` | `/messages/send` | Send text |
+| — | *(any send endpoint)* | Add `context: { message_id }` for a quoted reply — see [API reference](?tab=api#quoted-replies-context) |
 | `POST` | `/messages/template` | Send template |
 | `POST` | `/messages/media` | Send image / document / audio / video |
 | `POST` | `/messages/interactive` | Buttons, lists, catalog & product messages |
