@@ -1,7 +1,7 @@
 # WasapFlow Bridge — Partner Getting Started Guide
 
-**Version:** 2.9.1  
-**Last Updated:** 27 August 2026
+**Version:** 2.9.2  
+**Last Updated:** 1 September 2026
 
 > 🆕 **New in 2.9.0 — 32 endpoints, 68 in total.** QR codes, ice breakers and `/` commands, blocking, catalog & cart visibility, call settings, number status, WABA audit log, Flows, number lifecycle, calling and groups. See [Endpoints](#endpoints) below. If your integration works around something because "Bridge does not support it", check that list first — it probably does now. Error responses also carry `meta_code` now, so stop matching on message text. **Already integrated? Use [Prompt C](#which-prompt-should-you-use) — it audits your code against these changes.**
 
