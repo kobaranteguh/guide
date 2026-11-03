@@ -1,7 +1,9 @@
 # WasapFlow Bridge — Partner Getting Started Guide
 
 **Version:** 2.9.2  
-**Last Updated:** 1 September 2026
+**Last Updated:** 4 November 2026
+
+> 🆕 **New (4 November 2026) — Support Tickets API.** Your system or AI agent can now open, read and reply to support tickets itself (`POST /tickets`, `GET /tickets`, `GET /tickets/{uid}`, `POST /tickets/{uid}/reply`). See [Support](#support) below.
 
 > 🆕 **New in 2.9.0 — 32 endpoints, 68 in total.** QR codes, ice breakers and `/` commands, blocking, catalog & cart visibility, call settings, number status, WABA audit log, Flows, number lifecycle, calling and groups. See [Endpoints](#endpoints) below. If your integration works around something because "Bridge does not support it", check that list first — it probably does now. Error responses also carry `meta_code` now, so stop matching on message text. **Already integrated? Use [Prompt C](#which-prompt-should-you-use) — it audits your code against these changes.**
 
@@ -1326,6 +1328,15 @@ for each is in the [API Reference](?tab=api) — this is the index.
 | `GET` | `/webhooks/failed` | Events we could not deliver to you |
 | `POST` | `/webhooks/retry/:eventId` · `/webhooks/retry-all` | Redeliver |
 
+**Support tickets** 🆕
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/tickets` | Open a ticket (deduplicated by subject within 24h; max 20 new per 24h) |
+| `GET` | `/tickets?status=` | List your tickets |
+| `GET` | `/tickets/:uid` | Read a ticket and its messages |
+| `POST` | `/tickets/:uid/reply` | Reply (reopens a closed ticket) |
+
 ---
 
 ## Rate Limits
@@ -1420,9 +1431,11 @@ A: `whatsapp_business_management` and `whatsapp_business_messaging`. Your app do
 
 ## Support
 
-For technical issues, contact your WasapFlow account manager or email **support@wasapflow.com**.
+Open a **support ticket** — from the partner portal (**Support** in the sidebar, screenshots allowed) or from your own system / AI agent with `POST /tickets` (see [Support Tickets](?tab=api#support-tickets) in the API Reference). You get an email when we reply. Email **support@wasapflow.com** only if you cannot reach the portal.
 
-Include in your support request:
+Do not open tickets for validation errors in your own requests (`MISSING_FIELDS`, `INVALID_PAYLOAD`, a closed 24-hour window) — the error message already tells you what to fix.
+
+Include in your ticket:
 - Your Partner Key (first 8 chars only — **never share full key**)
 - WABA ID affected
 - Timestamp of the issue (UTC)
