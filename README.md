@@ -343,15 +343,15 @@ As a WasapFlow Bridge Partner, you get access to WhatsApp Cloud API infrastructu
 
 Login to your partner portal at **https://partner.wasapflow.com**
 
-Go to **Dashboard** — you will see:
+Open **Integration** in the sidebar — you will see:
 
 ```
 Partner Key    : wf_xxxxxxxxxxxxxxxxxxxx   [click eye icon to reveal]
-Webhook Secret : whs_xxxxxxxxxxxxxxxxxxxx  [in Settings page]
+Webhook Secret : whs_xxxxxxxxxxxxxxxxxxxx  [click eye icon to reveal]
 API Base URL   : https://officialapi.wasapflow.com/bridge/v1
 ```
 
-> ⚠️ **Keep your Partner Key secret.** Anyone with this key can send messages on behalf of your WABAs. If compromised, regenerate it from the dashboard immediately and contact support.
+> ⚠️ **Keep your Partner Key secret.** Anyone with this key can send messages on behalf of your WABAs. If compromised, contact support immediately so we can rotate it.
 
 ---
 
@@ -802,7 +802,7 @@ await waba.messages.interactive({
 
 ## Step 6 — Receive Webhooks
 
-WasapFlow forwards Meta webhook events to your `Webhook URL` (set in Partner Dashboard → Settings).
+WasapFlow forwards Meta webhook events to your `Webhook URL` (set in the partner portal under Integration → Webhook).
 
 ### Set your webhook URL
 Go to **Settings** in your partner portal → enter your server's public HTTPS URL.
