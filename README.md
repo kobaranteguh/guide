@@ -1178,8 +1178,10 @@ Each log row shows:
 
 ### How it works
 - **Creating an account is free** — no credit card, no expiry
-- Save a card when you are ready; nothing is charged at that point
-- Your **first WABA opens a slot**: $10.00 is charged that day and your monthly cycle starts from that date
+- **Your first number is free for 3 days, no card needed.** One free window per account, for the first number only
+- Add a card before the 3 days end to keep it: the first $10.00 is charged when the free days end and your monthly cycle starts from that date
+- No card by then → the number **pauses** (not deleted; webhooks and sends stop) and switches back on as soon as you add a card
+- A second number needs a card (`402 CARD_REQUIRED`). If you have already used your free window, your first WABA opens a slot and $10.00 is charged that day
 - One slot holds **3 active WABAs**. The 4th WABA opens a second slot, prorated for the rest of the cycle
 - Removing WABAs lowers your slot count from the next cycle; days already paid are not refunded
 
@@ -1193,7 +1195,7 @@ Each log row shows:
 | + Stripe processing fee | | $0.31 flat, per invoice |
 
 ### Managing billing
-- **Save card** — click "Save Card" in the Billing page. Nothing is charged until your first WABA
+- **Save card** — click "Save Card" in the Billing page. Nothing is charged before your free days end (or, without a free window, before your first WABA)
 - **Update card / download invoices** — click "Manage Billing" → Stripe Customer Portal
 - **Payment failed** — API is blocked immediately. Click "Pay Now" link in dashboard to pay outstanding invoice and restore access
 
@@ -1394,7 +1396,7 @@ async function sendWithRetry(fn, maxRetries = 3) {
 | `400` | — | `#130429` | Meta rate limit (per WABA) | Slow down sending |
 | `400` | — | `#131047` | Re-engagement window expired | Can only reply 24h after last customer message for free-form text |
 | `401` | `INVALID_KEY` | — | Invalid partner key | Check `x-partner-key` header |
-| `402` | `PAYMENT_REQUIRED` / `CARD_REQUIRED` | — | No card saved, or payment failed | Save a card, or pay the outstanding invoice |
+| `402` | `PAYMENT_REQUIRED` / `CARD_REQUIRED` | — | No card saved (only the first number is free for 3 days), or payment failed | Save a card, or pay the outstanding invoice |
 | `403` | `SUBSCRIPTION_CANCELLED` | — | Account cancelled | Resubscribe via Billing page |
 | `429` | `RATE_LIMIT` | — | WasapFlow rate limit hit | Reduce request rate or contact support |
 | `500` | `META_ERROR` | — | Meta API error | Retry — if persistent, check Meta status page |
@@ -1407,7 +1409,7 @@ async function sendWithRetry(fn, maxRetries = 3) {
 A: One WABA registration in WasapFlow corresponds to one phone number ID. If your client has multiple numbers, register each separately.
 
 **Q: What does it cost to start?**  
-A: Nothing. A partner account is free and never expires. You pay $10 only when you connect your first client WABA, and that slot covers up to 3 WABAs.
+A: Nothing. A partner account is free and never expires, and your first number is free for 3 days without a card. Add a card before the 3 days end to keep it; $10 is then charged and that slot covers up to 3 WABAs.
 
 **Q: Can I remove a WABA and add it back later?**  
 A: Yes. Removing a WABA stops new API access for that WABA immediately, but **if it was active at any point during the billing month, it still counts toward your peak WABA count** for that invoice. Re-registering restores full access. Re-registering the same WABA ID in the same month does not increase peak beyond what was already recorded.
