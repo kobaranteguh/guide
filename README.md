@@ -47,7 +47,7 @@ ALWAYS read the changelog URL above first. It lists breaking changes and Meta pl
 The system architecture must be divided into TWO main sections (Superadmin/Partner Settings and End-User Site):
 
 1. SUPERADMIN / PARTNER SETTINGS SITE:
-- REQUIRED: Create an "API Credentials" configuration page/tab. Display a CLEAR, prominent note reminding the developer/admin to copy-paste TWO (2) core credentials from their WasapFlow Partner Dashboard:
+- REQUIRED: Create an "API Credentials" configuration page/tab. Display a CLEAR, prominent note reminding the developer/admin to copy-paste TWO (2) core credentials from WasapFlow partner portal → Integration:
   1. Partner Key (Save securely in the DB or environment variables as WF_PARTNER_KEY)
   2. Webhook Secret (Save securely in the DB or environment variables as WF_WEBHOOK_SECRET)
 - Ensure the system securely stores and encrypts these credentials in the database.
@@ -55,7 +55,8 @@ The system architecture must be divided into TWO main sections (Superadmin/Partn
 - Include a "View Error Logs" action button/modal for each client that displays raw error details (Meta Error Code & Message) if an API request fails or if a 'message.failed' webhook event is captured.
 
 2. END-USER SITE (CUSTOMER PORTAL):
-- Create a "Connect WhatsApp" module using the "WasapFlow Hosted Popup" method. When clicked, it must open the WasapFlow connection URL in a popup window, listen for the 'WASAPFLOW_CONNECT_SUCCESS' window postMessage, and securely send the returned 'code' to our backend for automated registration (via the /clients/register-from-code endpoint) using connection_mode: "coexistence".
+- Create a "Connect WhatsApp" button (Meta Embedded Signup) in the client portal. When clicked, our BACKEND calls POST https://officialapi.wasapflow.com/bridge/v1/connect/session with the x-partner-key header and body { display_name: <client business name>, state: <our client id> }, and the frontend opens the returned 'connect_url' in a popup. The WasapFlow page handles the Meta popup, Coexistence and the code exchange itself - do NOT call /clients/register-from-code in this flow. On 'WASAPFLOW_CONNECT_SUCCESS' save data.waba_id and data.phone_number_id against the client whose id equals data.state. Never put the partner key in a browser URL.
+- After deploying the webhook endpoint below, the admin pastes its full public HTTPS URL into WasapFlow partner portal → Integration → Webhook URL and saves. Do this BEFORE the first client connects, so no events are lost. WasapFlow is only the bridge: it has no inbox, so our system is where conversations live.
 - Build an inbound Webhook Listener endpoint (POST /webhook/whatsapp). The backend MUST strictly verify the request's authenticity by validating the 'x-wasapflow-signature' header against the stored 'WF_WEBHOOK_SECRET' before processing any payload. 
 - Properly route inbound events: handle 'message.received' to capture customer chat messages into our live chat database, and update message delivery logs using 'sent', 'delivered', and 'read' status updates.
 - 🆔 BSUID FUTURE-PROOFING: For every customer contact, store BOTH the phone number ('data.from') AND the Business-Scoped User ID ('data.bsuid', format 'MY.xxx') in the database. BSUID is a stable identifier that persists across WhatsApp username adoption (Meta rollout June 2026). Use BSUID as the customer's primary lookup key when available; fall back to phone otherwise. The same advice applies to status webhooks where 'data.recipient_bsuid' is provided alongside 'data.recipient'.
@@ -68,8 +69,8 @@ The system architecture must be divided into TWO main sections (Superadmin/Partn
 - 🤖 REQUIRED — META BUSINESS AGENT STANDBY BANNER: If a client enables Meta Business Agent on their WhatsApp number, Meta's AI becomes the active handler and Meta STOPS sending 'message.received' to us, sending 'standby.message_received', 'standby.message_echo' and 'standby.message_status' instead. The client's automation appears to die with no error and nothing in our logs. You MUST handle this: (1) On ANY event whose name starts with 'standby.' — or where data.standby === true — do NOT auto-reply. Sending a message during standby makes our app the active handler and causes two AIs to fight over one conversation. Store the message for conversation context only. (2) Raise a PERSISTENT WARNING BANNER for that client, shown BOTH in the app header AND at the top of that number's inbox. Style it as a WARNING (yellow/amber) not an error — nothing is broken. Wording: "🤖 Meta Business Agent is answering your customers — not your AI. To take back control, turn it off in WhatsApp Manager → Account tools → Business Agent. Manual chat still works normally." (3) Make raising the banner IDEMPOTENT — standby events can arrive many times a minute, so create/update one alert record per phone_number_id rather than notifying per event. (4) CLEAR the banner automatically when a normal 'message.received' event arrives again for that number, which means we are the active handler once more.
 - 🔍 LOG UNRECOGNISED WEBHOOK EVENTS: Our webhook handler will be a chain of checks on the event name, which means any NEW event Bridge or Meta introduces falls through SILENTLY - no error, no log, nothing, and we find out months later when a client reports something odd. Add a final fallback branch: if an incoming event name is not one we explicitly handle, log it ONCE with the full payload, then throttle repeats (e.g. log again only at 2, 4, 8, 16 occurrences so a high-volume event cannot flood the logs). This is how we learn about new Meta capabilities in days instead of months.
 - 📞 PHONE NUMBER IS NOT THE WHATSAPP ID (REQUIRED by Meta): Do NOT assume a customer's WhatsApp number is their phone number. After WhatsApp usernames, Meta may omit the phone entirely and send only a BSUID like 'MY.2035200694071263' (fields 'wa_id'/'from'/'recipient_id' are omitted when the user has a username and has not interacted for 30 days). A BSUID can send WhatsApp messages but a COURIER CANNOT CALL IT. Therefore: (1) Store TWO separate fields per contact - a canonical id (phone OR bsuid, used for sending WhatsApp and matching the contact) and a reachable phone (always a real phone, may be empty, used for courier/invoice/voice). (2) In phone validation, DETECT and REJECT BSUID - never normalise it. Pattern: /^(?:whatsapp:)?[A-Z]{2}\.(?:ENT\.)?[A-Za-z0-9]{1,128}$/. The usual normaliser replace(/\D/g,'') then prepending a country code turns 'MY.2035200694071263' into '602035200694071263', which LOOKS like a valid Malaysian number, passes naive checks and reaches the courier silently. Return null instead - no number beats a fake one. (3) In the order collection flow, ASK the customer for a phone number as a required field alongside name and address. When we already hold a plausible number, ask them to CONFIRM it (one-word answer, minimal friction): "Boleh sahkan no 012-345 6789 ni untuk kurier WhatsApp atau call ya?". When we have nothing, ask them to provide it: "Boleh bagi no telefon untuk kurier WhatsApp atau call masa hantar ya?". Newest number always wins so corrections stick. (4) When pushing to WooCommerce or any ERP, send the REAL phone as billing.phone and keep the canonical id in a SEPARATE meta field so status/tracking webhooks can still match the contact back. Leave billing.phone EMPTY rather than filling it with an id.
-- 🪟 HANDLE ALL THREE POPUP OUTCOMES: The connect popup posts back to window.opener on success, cancel AND failure - 'WASAPFLOW_CONNECT_SUCCESS' (waba_id, phone_number_id, display_name, quality_rating, connection_mode), 'WASAPFLOW_CONNECT_CANCEL' (reason) and 'WASAPFLOW_CONNECT_ERROR' (message, code). All three carry the 'state' we passed when minting the link. Verify event.origin is https://officialapi.wasapflow.com, then IGNORE any message whose 'state' does not match the client this UI is connecting - a popup left open for one client must never register against another. Do not leave the UI stuck in a connecting state waiting only for success: before Bridge 2.6.1 cancel and error were never posted at all, so any handler written against an older version never fired. Keep a 'popup.closed' poll as a safety net, since a customer can still close the window before any message is sent.
-- 🔑 NEVER PUT THE PARTNER KEY IN A BROWSER URL: The onboarding link must be created server-side with POST /bridge/v1/connect/session (authenticated with the x-partner-key header), which returns a 'connect_url' carrying a 30-minute token. Open THAT url in the client's browser. Do NOT build '/bridge/connect?partner_key=...' in frontend code or in a link the client can see - partner_key is the full API credential for every WABA and every send, and a URL leaks it into browser history, the Referer header sent to other hosts, and server access logs in plain text. Pass an optional 'state' (max 255 chars) to that endpoint and it is returned untouched when onboarding completes, in the postMessage payload and in the register-from-code response, so the finished connection can be matched to our own client record. If our code currently builds the partner_key link, migrate it and then rotate the key in the partner portal - a key that has been through a browser must be treated as exposed.
+- 🪟 HANDLE ALL THREE POPUP OUTCOMES: The connect popup posts back to window.opener on success, cancel AND failure - 'WASAPFLOW_CONNECT_SUCCESS' (waba_id, phone_number_id, display_name, quality_rating, connection_mode), 'WASAPFLOW_CONNECT_CANCEL' (reason) and 'WASAPFLOW_CONNECT_ERROR' (message, code). All three carry the 'state' we passed when minting the link. Verify event.origin is https://officialapi.wasapflow.com, then IGNORE any message whose 'state' does not match the client this UI is connecting - a popup left open for one client must never register against another. Do not leave the UI stuck in a connecting state waiting only for success: before Bridge 2.6.0 cancel and error were never posted at all, so any handler written against an older version never fired. Keep a 'popup.closed' poll as a safety net, since a customer can still close the window before any message is sent.
+- 🔑 NEVER PUT THE PARTNER KEY IN A BROWSER URL: The onboarding link must be created server-side with POST /bridge/v1/connect/session (authenticated with the x-partner-key header), which returns a 'connect_url' carrying a 30-minute token. Open THAT url in the client's browser. Do NOT build '/bridge/connect?partner_key=...' in frontend code or in a link the client can see - partner_key is the full API credential for every WABA and every send, and a URL leaks it into browser history, the Referer header sent to other hosts, and server access logs in plain text. Pass an optional 'state' (max 255 chars) to that endpoint and it is returned untouched when onboarding completes, in the postMessage payload and in the register-from-code response, so the finished connection can be matched to our own client record. If our code currently builds the partner_key link, migrate it, deploy, then open a WasapFlow support ticket asking for the key to be rotated (rotation is not self-serve; connected WABAs are not affected) - a key that has been through a browser must be treated as exposed.
 - 📤 SENDING TO A CUSTOMER WITH NO PHONE NUMBER: From Bridge 2.5.0 every send endpoint accepts the recipient under 'to', 'user_id' or 'recipient', and a BSUID is routed correctly whichever you use - so you can simply put the canonical id in 'to' and stop branching. When a phone number and a BSUID are both supplied the phone number wins (Meta's rule). ON 2.4.0 THIS WAS NOT TRUE: a BSUID placed in 'to' was forwarded to Meta's phone field, stripped to digits, and failed with 131026 'Message undeliverable' AFTER Bridge had already returned 2xx - so if you are pinned to 2.4.0 you must use 'recipient'. ALWAYS record the wamid from the send response: it is returned as BOTH 'message_id' and 'messages[0].id' (same value), and every message.sent/delivered/read/failed callback is keyed on it - without it a message.failed cannot be matched to anything and a silent non-delivery looks like success forever. IMPORTANT: a send to a BSUID returns contacts[0].user_id and NO wa_id, so any code reading wa_id from a send response must read user_id for BSUID sends. Meta REJECTS BSUID recipients for one-tap, zero-tap and copy-code AUTHENTICATION templates - Bridge 2.5.0 returns HTTP 400 AUTH_TEMPLATE_NEEDS_PHONE (meta_code 131062, retryable false). This is permanent: do not retry it, collect a real phone number instead.
 - 🔧 DO NOT BUILD WHAT BRIDGE ALREADY EXPOSES: as of 2.9.0 there are 68 endpoints, not the dozen most integrations use. Before writing a workaround or emailing support, check the API reference for: QR codes and short links (/qr-codes), ice breakers and slash-commands (/conversational-automation), blocking spam numbers (/blocked), showing or hiding the catalog and cart (/commerce-settings), call and No-Storage settings (/settings), whether a number is an Official Business Account or has 2FA on (/phone-status), the WABA audit log for 'why did this template disappear' (/waba/activities), and the phone number lifecycle (/phone/request-code, /phone/verify-code, /phone/two-step, /phone/register, /phone/deregister). Irreversible calls need {"confirm": true} or they return 400 CONFIRMATION_REQUIRED. If we have ever changed the two-step PIN outside Bridge, set it once via POST /phone/two-step - otherwise WasapFlow's re-registration of our numbers will fail silently during a recovery.
 - 🚦 READ META ERROR CODES, NOT MESSAGE TEXT: error responses carry meta_code, meta_subcode and details alongside message. Branch on meta_code - Meta rewords messages without warning. Know these three: 131047 re-engagement required (user has not messaged in 24h, retry only after they do), 131062 AUTHENTICATION template to a BSUID (permanent, get a real phone number), and 131000 on any /groups call which means Groups is not enabled on that number by Meta (not a Bridge fault, not retryable). On POST and DELETE /blocked an HTTP 200 does NOT mean every number succeeded - Meta reports per-number failures in a 'failed' array, so read both arrays.
@@ -111,12 +112,13 @@ THE SYSTEM INTEGRATION MUST COVER THESE TWO MAIN PARTS:
 
 1. CORE SYSTEM & CONFIGURATION SETUP:
 - REQUIRED: Set up the system to read the following credentials securely from our backend environment variables (.env file):
-  1. WF_PARTNER_KEY (Our unique partner key from the WasapFlow dashboard)
+  1. WF_PARTNER_KEY (Our unique partner key from WasapFlow partner portal → Integration)
   2. WF_WEBHOOK_SECRET (Our webhook verification secret)
 - Build a simple, internal administrative health dashboard displaying our current WABA status, Meta Quality Status (GREEN/YELLOW/RED), and an internal error log view that captures raw error details (Meta Error Code & Message) if any outgoing message or automated action fails.
 
 2. EMBEDDED SIGNUP & WEBHOOK HANDLING:
-- Create a "Connect WhatsApp" button in our internal admin console using the "WasapFlow Hosted Popup" method. Clicking it must open the WasapFlow onboarding URL, listen for the 'WASAPFLOW_CONNECT_SUCCESS' window postMessage, and securely send the returned 'code' to our backend to trigger automatic registration (/clients/register-from-code endpoint) using connection_mode: "coexistence".
+- Create a "Connect WhatsApp" button (Meta Embedded Signup) in our internal admin console. When clicked, our BACKEND calls POST https://officialapi.wasapflow.com/bridge/v1/connect/session with the x-partner-key header (optional body { display_name, state }) and the frontend opens the returned 'connect_url' in a popup. The WasapFlow page handles the Meta popup, Coexistence and the code exchange - do NOT call /clients/register-from-code in this flow. On 'WASAPFLOW_CONNECT_SUCCESS' store data.waba_id and data.phone_number_id.
+- After deploying the webhook endpoint below, paste its full public HTTPS URL into WasapFlow partner portal → Integration → Webhook URL and save, BEFORE connecting the number. WasapFlow is only the bridge: it has no inbox, so our CRM is where conversations live.
 - Build an inbound Webhook Listener endpoint (POST /webhook/whatsapp). The backend MUST strictly verify the request's authenticity by validating the 'x-wasapflow-signature' header against our stored 'WF_WEBHOOK_SECRET' before processing any payload.
 - Route inbound events efficiently: handle 'message.received' to pipe customer chats straight into our internal support desk/CRM database, and update our outbound tracking log status using 'sent', 'delivered', and 'read' updates.
 - 🆔 BSUID FUTURE-PROOFING: Each 'message.received' payload includes 'data.bsuid' (Business-Scoped User ID, format 'MY.xxx') alongside 'data.from' (phone). Store BOTH in our CRM customer record — BSUID is stable across WhatsApp username adoption (Meta rollout June 2026) and should be the primary lookup key when available. Status webhooks similarly include 'data.recipient_bsuid' alongside 'data.recipient'.
@@ -128,8 +130,8 @@ THE SYSTEM INTEGRATION MUST COVER THESE TWO MAIN PARTS:
 - 🤖 REQUIRED — META BUSINESS AGENT STANDBY BANNER: If Meta Business Agent gets enabled on our WhatsApp number, Meta's AI becomes the active handler and Meta STOPS sending 'message.received' to us, sending 'standby.message_received', 'standby.message_echo' and 'standby.message_status' instead. Our automation appears to die with no error and nothing in our logs. Handle this: (1) On ANY event whose name starts with 'standby.' — or where data.standby === true — do NOT auto-reply; sending a message during standby makes our app the active handler and causes two AIs to fight over one conversation. Store it for conversation context only. (2) Raise a PERSISTENT WARNING BANNER in our admin header AND at the top of the inbox, styled as a WARNING (yellow/amber) not an error, with wording: "🤖 Meta Business Agent is answering our customers — not our AI. To take back control, turn it off in WhatsApp Manager → Account tools → Business Agent. Manual chat still works normally." (3) Make raising it IDEMPOTENT — standby events arrive many times a minute. (4) CLEAR it automatically when a normal 'message.received' arrives again, meaning we are the active handler once more.
 - 🔍 LOG UNRECOGNISED WEBHOOK EVENTS: Our webhook handler will be a chain of checks on the event name, which means any NEW event Bridge or Meta introduces falls through SILENTLY - no error, no log, nothing, and we find out months later when a client reports something odd. Add a final fallback branch: if an incoming event name is not one we explicitly handle, log it ONCE with the full payload, then throttle repeats (e.g. log again only at 2, 4, 8, 16 occurrences so a high-volume event cannot flood the logs). This is how we learn about new Meta capabilities in days instead of months.
 - 📞 PHONE NUMBER IS NOT THE WHATSAPP ID (REQUIRED by Meta): Do NOT assume a customer's WhatsApp number is their phone number. After WhatsApp usernames, Meta may omit the phone entirely and send only a BSUID like 'MY.2035200694071263' (fields 'wa_id'/'from'/'recipient_id' are omitted when the user has a username and has not interacted for 30 days). A BSUID can send WhatsApp messages but a COURIER CANNOT CALL IT. Therefore: (1) Store TWO separate fields per contact - a canonical id (phone OR bsuid, used for sending WhatsApp and matching the contact) and a reachable phone (always a real phone, may be empty, used for courier/invoice/voice). (2) In phone validation, DETECT and REJECT BSUID - never normalise it. Pattern: /^(?:whatsapp:)?[A-Z]{2}\.(?:ENT\.)?[A-Za-z0-9]{1,128}$/. The usual normaliser replace(/\D/g,'') then prepending a country code turns 'MY.2035200694071263' into '602035200694071263', which LOOKS like a valid Malaysian number, passes naive checks and reaches the courier silently. Return null instead - no number beats a fake one. (3) In the order collection flow, ASK the customer for a phone number as a required field alongside name and address. When we already hold a plausible number, ask them to CONFIRM it (one-word answer, minimal friction): "Boleh sahkan no 012-345 6789 ni untuk kurier WhatsApp atau call ya?". When we have nothing, ask them to provide it: "Boleh bagi no telefon untuk kurier WhatsApp atau call masa hantar ya?". Newest number always wins so corrections stick. (4) When pushing to WooCommerce or any ERP, send the REAL phone as billing.phone and keep the canonical id in a SEPARATE meta field so status/tracking webhooks can still match the contact back. Leave billing.phone EMPTY rather than filling it with an id.
-- 🪟 HANDLE ALL THREE POPUP OUTCOMES: The connect popup posts back to window.opener on success, cancel AND failure - 'WASAPFLOW_CONNECT_SUCCESS' (waba_id, phone_number_id, display_name, quality_rating, connection_mode), 'WASAPFLOW_CONNECT_CANCEL' (reason) and 'WASAPFLOW_CONNECT_ERROR' (message, code). All three carry the 'state' we passed when minting the link. Verify event.origin is https://officialapi.wasapflow.com, then IGNORE any message whose 'state' does not match the client this UI is connecting - a popup left open for one client must never register against another. Do not leave the UI stuck in a connecting state waiting only for success: before Bridge 2.6.1 cancel and error were never posted at all, so any handler written against an older version never fired. Keep a 'popup.closed' poll as a safety net, since a customer can still close the window before any message is sent.
-- 🔑 NEVER PUT THE PARTNER KEY IN A BROWSER URL: The onboarding link must be created server-side with POST /bridge/v1/connect/session (authenticated with the x-partner-key header), which returns a 'connect_url' carrying a 30-minute token. Open THAT url in the client's browser. Do NOT build '/bridge/connect?partner_key=...' in frontend code or in a link the client can see - partner_key is the full API credential for every WABA and every send, and a URL leaks it into browser history, the Referer header sent to other hosts, and server access logs in plain text. Pass an optional 'state' (max 255 chars) to that endpoint and it is returned untouched when onboarding completes, in the postMessage payload and in the register-from-code response, so the finished connection can be matched to our own client record. If our code currently builds the partner_key link, migrate it and then rotate the key in the partner portal - a key that has been through a browser must be treated as exposed.
+- 🪟 HANDLE ALL THREE POPUP OUTCOMES: The connect popup posts back to window.opener on success, cancel AND failure - 'WASAPFLOW_CONNECT_SUCCESS' (waba_id, phone_number_id, display_name, quality_rating, connection_mode), 'WASAPFLOW_CONNECT_CANCEL' (reason) and 'WASAPFLOW_CONNECT_ERROR' (message, code). All three carry the 'state' we passed when minting the link. Verify event.origin is https://officialapi.wasapflow.com, then IGNORE any message whose 'state' does not match the client this UI is connecting - a popup left open for one client must never register against another. Do not leave the UI stuck in a connecting state waiting only for success: before Bridge 2.6.0 cancel and error were never posted at all, so any handler written against an older version never fired. Keep a 'popup.closed' poll as a safety net, since a customer can still close the window before any message is sent.
+- 🔑 NEVER PUT THE PARTNER KEY IN A BROWSER URL: The onboarding link must be created server-side with POST /bridge/v1/connect/session (authenticated with the x-partner-key header), which returns a 'connect_url' carrying a 30-minute token. Open THAT url in the client's browser. Do NOT build '/bridge/connect?partner_key=...' in frontend code or in a link the client can see - partner_key is the full API credential for every WABA and every send, and a URL leaks it into browser history, the Referer header sent to other hosts, and server access logs in plain text. Pass an optional 'state' (max 255 chars) to that endpoint and it is returned untouched when onboarding completes, in the postMessage payload and in the register-from-code response, so the finished connection can be matched to our own client record. If our code currently builds the partner_key link, migrate it, deploy, then open a WasapFlow support ticket asking for the key to be rotated (rotation is not self-serve; connected WABAs are not affected) - a key that has been through a browser must be treated as exposed.
 - 📤 SENDING TO A CUSTOMER WITH NO PHONE NUMBER: From Bridge 2.5.0 every send endpoint accepts the recipient under 'to', 'user_id' or 'recipient', and a BSUID is routed correctly whichever you use - so you can simply put the canonical id in 'to' and stop branching. When a phone number and a BSUID are both supplied the phone number wins (Meta's rule). ON 2.4.0 THIS WAS NOT TRUE: a BSUID placed in 'to' was forwarded to Meta's phone field, stripped to digits, and failed with 131026 'Message undeliverable' AFTER Bridge had already returned 2xx - so if you are pinned to 2.4.0 you must use 'recipient'. ALWAYS record the wamid from the send response: it is returned as BOTH 'message_id' and 'messages[0].id' (same value), and every message.sent/delivered/read/failed callback is keyed on it - without it a message.failed cannot be matched to anything and a silent non-delivery looks like success forever. IMPORTANT: a send to a BSUID returns contacts[0].user_id and NO wa_id, so any code reading wa_id from a send response must read user_id for BSUID sends. Meta REJECTS BSUID recipients for one-tap, zero-tap and copy-code AUTHENTICATION templates - Bridge 2.5.0 returns HTTP 400 AUTH_TEMPLATE_NEEDS_PHONE (meta_code 131062, retryable false). This is permanent: do not retry it, collect a real phone number instead.
 - 🔧 DO NOT BUILD WHAT BRIDGE ALREADY EXPOSES: as of 2.9.0 there are 68 endpoints, not the dozen most integrations use. Before writing a workaround or emailing support, check the API reference for: QR codes and short links (/qr-codes), ice breakers and slash-commands (/conversational-automation), blocking spam numbers (/blocked), showing or hiding the catalog and cart (/commerce-settings), call and No-Storage settings (/settings), whether a number is an Official Business Account or has 2FA on (/phone-status), the WABA audit log for 'why did this template disappear' (/waba/activities), and the phone number lifecycle (/phone/request-code, /phone/verify-code, /phone/two-step, /phone/register, /phone/deregister). Irreversible calls need {"confirm": true} or they return 400 CONFIRMATION_REQUIRED. If we have ever changed the two-step PIN outside Bridge, set it once via POST /phone/two-step - otherwise WasapFlow's re-registration of our numbers will fail silently during a recovery.
 - 🚦 READ META ERROR CODES, NOT MESSAGE TEXT: error responses carry meta_code, meta_subcode and details alongside message. Branch on meta_code - Meta rewords messages without warning. Know these three: 131047 re-engagement required (user has not messaged in 24h, retry only after they do), 131062 AUTHENTICATION template to a BSUID (permanent, get a real phone number), and 131000 on any /groups call which means Groups is not enabled on that number by Meta (not a Bridge fault, not retryable). On POST and DELETE /blocked an HTTP 200 does NOT mean every number succeeded - Meta reports per-number failures in a 'failed' array, so read both arrays.
@@ -208,6 +210,7 @@ Check our webhook handler specifically for:
   - Do we read the `X-Bridge-Notice-Level` response header anywhere?
   - Do we log webhook events whose names we do not recognise, or do they fall through silently?
   - Does ANY of our code read camelCase properties off a Bridge response? (see STEP 0 - this one is already broken, not merely missing)
+  - Does any code build a '/bridge/connect?partner_key=' link? If so, replace it with a server-side POST /bridge/v1/connect/session call that returns connect_url, deploy, then ask WasapFlow support to rotate the partner key.
 
 Check our send and delivery code specifically for:
   - Do we send an 'Idempotency-Key' header on every POST /messages/* and POST /broadcasts, and reuse the SAME key when we retry the same message?
@@ -378,6 +381,8 @@ API Base URL   : https://officialapi.wasapflow.com/bridge/v1
 
 > ⚠️ **Keep your Partner Key secret.** Anyone with this key can send messages on behalf of your WABAs. If compromised, contact support immediately so we can rotate it.
 
+Put both values in **your own system's** `.env` (`WF_PARTNER_KEY`, `WF_WEBHOOK_SECRET`). Then save your system's webhook URL under **Integration → Webhook URL** (see Step 6) **before** connecting any number. WasapFlow is only the bridge between Meta and your system: there is no WasapFlow inbox, and the portal has no button to connect numbers. Numbers are connected from a **Connect WhatsApp** button inside your system (Step 3).
+
 ---
 
 ## Step 2 — There Is Nothing to Install
@@ -483,9 +488,9 @@ Your backend → POST /clients/register-from-code { code } → WasapFlow
 Your backend must call the Bridge API to get the Meta App ID and Config ID at runtime. **These values are never hardcoded or exposed in your dashboard** — they are fetched securely via API.
 
 ```javascript
-// Your backend calls this (server-side, not from frontend)
-const config = await bridge.clients.getEmbeddedSignupConfig();
-// Returns: { success: true, app_id: "645...", config_id: "877...", connection_mode: "coexistence", extras: {...} }
+// Your backend calls this (server-side, not from frontend) — bridge() is the small fetch helper from Step 1
+const config = await bridge('/embedded-signup/config');
+// Returns: { success: true, app_id: "645...", config_id: "877...", connection_mode: "coexistence", es_version: "v5", extras: {...} }
 ```
 
 Or raw HTTP:
@@ -496,16 +501,7 @@ curl -H "x-partner-key: wf_your_key" \
 
 > **Do not use your own Meta App.** You must use WasapFlow's App ID so webhooks and token exchange route through our platform correctly. Do not hardcode these values — always fetch from the API so updates are automatic.
 
-The returned `extras` are the Coexistence launch settings:
-
-```javascript
-{
-    setup: {},
-    featureType: 'whatsapp_business_app_onboarding',
-    sessionInfoVersion: '3',
-    version: 'v4'
-}
-```
+The returned `extras` are the Embedded Signup launch settings. Pass them to `FB.login` exactly as returned (currently `{ version: 'v5' }`); do not hardcode them, because WasapFlow updates them when Meta changes the flow.
 
 #### Step 2: Load the Facebook JS SDK
 
@@ -528,23 +524,27 @@ document.getElementById('connectBtn').onclick = async function() {
     const popup = window.open(url, 'wasapflow_connect', 'width=480,height=600,left=200,top=100');
 
     window.addEventListener('message', function handler(event) {
-        if (event.data?.type === 'WASAPFLOW_CONNECT_SUCCESS') {
-            window.removeEventListener('message', handler);
-            console.log('WABA connected:', event.data.waba_id);
-            popup.close();
-        }
+        if (event.origin !== 'https://officialapi.wasapflow.com') return;
+        if (!/^WASAPFLOW_CONNECT_/.test(event.data?.type || '')) return;
+        window.removeEventListener('message', handler);
+        if (event.data.type === 'WASAPFLOW_CONNECT_SUCCESS') console.log('WABA connected:', event.data.waba_id, 'state:', event.data.state);
+        popup.close();
     });
 };
 ```
 
 **Your backend — generate the connect URL:**
 ```javascript
-// Node.js
-app.get('/api/whatsapp-connect-url', (req, res) => {
-    const url = `https://officialapi.wasapflow.com/bridge/connect` +
-                `?partner_key=${process.env.WF_PARTNER_KEY}` +
-                `&display_name=${encodeURIComponent(req.query.clientName || '')}`;
-    res.json({ url });
+// Node.js — server-side only: the partner key never reaches the browser
+app.get('/api/whatsapp-connect-url', async (req, res) => {
+    const r = await fetch('https://officialapi.wasapflow.com/bridge/v1/connect/session', {
+        method: 'POST',
+        headers: { 'x-partner-key': process.env.WF_PARTNER_KEY, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ display_name: req.query.clientName || '', state: String(req.query.clientId || '') }),
+    });
+    const data = await r.json();
+    if (!data.success) return res.status(r.status).json(data);
+    res.json({ url: data.connect_url });   // 30-minute link, safe to open in the browser
 });
 ```
 
@@ -560,7 +560,7 @@ app.get('/api/whatsapp-connect-url', (req, res) => {
 
 Only use this if you need full control. Requires your domain to be whitelisted in WasapFlow's Meta App — contact support to add your domain first.
 
-In self-hosted mode, your frontend must pass the Coexistence `extras` to `FB.login`, and your backend must register the returned code with `connectionMode: 'coexistence'`.
+In self-hosted mode, your frontend must pass the `extras` returned by the API to `FB.login`, and your backend must register the returned code with `connection_mode: 'coexistence'`.
 
 #### Step 3: Initialize and launch the signup
 
@@ -591,13 +591,7 @@ async function initWhatsAppSignup() {
             config_id: config_id,
             response_type: 'code',
             override_default_response_type: true,
-            extras: {
-                setup: {},
-                featureType: 'whatsapp_business_app_onboarding',
-                sessionInfoVersion: '3',
-                version: 'v4',
-                ...(extras || {})
-            }
+            extras: extras   // exactly as returned by GET /embedded-signup/config
         });
     };
 }
@@ -610,10 +604,9 @@ initWhatsAppSignup();
 // YOUR backend receives the code from YOUR frontend
 app.post('/api/connect-whatsapp', async (req, res) => {
     try {
-        const result = await bridge.clients.registerFromCode({
-            code: req.body.code,
-            displayName: req.body.clientName || '',
-            connectionMode: 'coexistence'
+        const result = await bridge('/clients/register-from-code', {
+            method: 'POST',
+            body: { code: req.body.code, display_name: req.body.clientName || '', connection_mode: 'coexistence' }
         });
 
         if (result.success) {
@@ -655,11 +648,9 @@ For clients who can't use Embedded Signup (e.g., mobile users), they can provide
 3. Register via API:
 
 ```javascript
-await bridge.clients.register({
-    wabaId: '123456789',
-    phoneNumberId: '987654321',
-    accessToken: 'EAAxxxxxxxx',
-    displayName: 'My Client Business'
+await bridge('/clients/register', {
+    method: 'POST',
+    body: { waba_id: '123456789', phone_number_id: '987654321', access_token: 'EAAxxxxxxxx', display_name: 'My Client Business' }
 });
 ```
 
@@ -667,9 +658,9 @@ await bridge.clients.register({
 
 ---
 
-## Step 4 — Register a Client WABA
+## Step 4 — Register a Client WABA Manually (Option B only)
 
-Once you have credentials, register the WABA with WasapFlow. This is done **once per client**.
+Skip this step if you use the Connect WhatsApp button (`POST /connect/session`) — the WABA is registered automatically when your client finishes. Use this only when you already have credentials from Meta Business Manager. This is done **once per client**.
 
 ### Using the API directly:
 ```bash
@@ -880,7 +871,7 @@ await waba.messages.interactive({
 WasapFlow forwards Meta webhook events to your `Webhook URL` (set in the partner portal under Integration → Webhook).
 
 ### Set your webhook URL
-Go to **Settings** in your partner portal → enter your server's public HTTPS URL.
+Go to **Integration** in your partner portal → **Webhook URL** → enter your server's public HTTPS URL → Save. Do this before connecting your first number.
 
 ```
 https://yourapp.com/webhooks/wasapflow
@@ -1191,17 +1182,12 @@ This re-subscribes the WABA to WasapFlow's Meta webhook endpoint. Safe to call a
 
 ## Step 9 — Testing Before Going Live
 
-Use Meta's test phone numbers to test without real WhatsApp accounts.
-
-### Using Meta Test Numbers:
-1. In **Meta for Developers** → your app → **WhatsApp** → **API Setup**
-2. Use the **Test phone number** provided (no real account needed)
-3. Add a recipient number in **"To"** → verify via OTP
+Bridge partners have no Meta developer app of their own, so Meta's test phone numbers do not apply. Test with a real number: connect it through the Connect WhatsApp button in your system (your first number is free for 3 days) and send messages to your own phone.
 
 ### Verify a phone number is on WhatsApp:
 ```javascript
-const check = await bridge.contacts.check('60123456789');
-console.log(check.exists); // true / false
+const check = await bridge('/contacts/60123456789', { wabaId: 'YOUR_WABA_ID' });
+console.log(check); // see GET /contacts/:phone in the API reference
 ```
 
 > **Best practice:** Always check if a number is on WhatsApp before sending to avoid failed deliveries and Meta penalties.
@@ -1313,12 +1299,12 @@ Meta may change rates only on 1 January, 1 April, 1 July, or 1 October, with at 
 
 ## Monitoring — What to Watch
 
-### Dashboard (partner.wasapflow.com/dashboard)
+### Dashboard (partner.wasapflow.com/bridge/partner/dashboard)
 - **Active WABAs** — how many client accounts are registered
 - **Requests (24h)** — total API calls in last 24 hours
 - **Success / Errors** — breakdown of request outcomes
 
-### Logs (partner.wasapflow.com/logs)
+### Logs (partner.wasapflow.com/bridge/partner/logs)
 Each log row shows:
 - **Time** — when the request was made
 - **WABA ID** — which client account
@@ -1328,7 +1314,7 @@ Each log row shows:
 - **Meta Error Code** — if Meta returned an error (e.g. `#132001` = template not found)
 - **Duration** — response time in ms
 
-### WABAs (partner.wasapflow.com/wabas)
+### WABAs (partner.wasapflow.com/bridge/partner/wabas)
 - List of all registered client WABAs
 - Status of each (active/inactive)
 - Last activity timestamp
@@ -1584,7 +1570,7 @@ async function sendWithRetry(path, body, maxRetries = 4) {
 
 4. **Store access tokens encrypted** — never store Meta tokens in plain text in your DB
 
-5. **Rotate your Partner Key periodically** — regenerate from dashboard every 3–6 months
+5. **Rotate your Partner Key if it may have been exposed** — rotation is not self-serve: open a support ticket and we rotate it and send you the new key. Connected WABAs are not affected
 
 6. **Restrict API access by IP** — if your server has a fixed IP, whitelist it in your firewall
 
@@ -1620,7 +1606,7 @@ A: One WABA registration in WasapFlow corresponds to one phone number ID. If you
 A: Nothing. A partner account is free and never expires, and your first number is free for 3 days without a card. Add a card before the 3 days end to keep it; $10 is then charged and that slot covers up to 3 WABAs.
 
 **Q: Can I remove a WABA and add it back later?**  
-A: Yes. Removing a WABA stops new API access for that WABA immediately, but **if it was active at any point during the billing month, it still counts toward your peak WABA count** for that invoice. Re-registering restores full access. Re-registering the same WABA ID in the same month does not increase peak beyond what was already recorded.
+A: Yes. Removing a WABA stops API access for it immediately. Slots follow your active WABAs: removing WABAs lowers your slot count from the next cycle, and days already paid are not refunded. Re-registering restores full access.
 
 **Q: My client's access token expired. What now?**  
 A: Generate a new permanent token from Meta Business Manager (System Users), then call `POST /clients/register` again with the new token (it's an upsert — safe to call on existing WABAs). Alternatively, call `POST /clients/:wabaId/refresh` with `{ "access_token": "new_token" }` to update and sync quality rating in one step.
@@ -1632,10 +1618,10 @@ A: Call `POST /clients/:wabaId/resubscribe-webhook` to re-subscribe the WABA to 
 A: The partner dashboard is for your own use to manage your WABAs. Your clients interact with WhatsApp directly through your SaaS app — they don't need access to the WasapFlow partner portal.
 
 **Q: Is there a sandbox/test mode?**  
-A: Use Meta's test phone numbers (available in your Meta developer app) for testing without real WhatsApp accounts.
+A: No. Bridge partners have no Meta developer app, so Meta's test numbers do not apply. Connect a real number through the Connect WhatsApp button in your system (the first number is free for 3 days) and test by messaging your own phone.
 
-**Q: What Meta permissions does my app need?**  
-A: `whatsapp_business_management` and `whatsapp_business_messaging`. Your app doesn't need to be verified if you're using WasapFlow as the Tech Provider.
+**Q: Do I need my own Meta app or Meta permissions?**  
+A: No. WasapFlow's Meta app (a verified Tech Provider) holds `whatsapp_business_management` and `whatsapp_business_messaging`; your clients grant them to WasapFlow during Embedded Signup. You only call the Bridge API with your partner key.
 
 ---
 
