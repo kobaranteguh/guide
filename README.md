@@ -1182,7 +1182,7 @@ This re-subscribes the WABA to WasapFlow's Meta webhook endpoint. Safe to call a
 
 ## Step 9 — Testing Before Going Live
 
-Bridge partners have no Meta developer app of their own, so Meta's test phone numbers do not apply. Test with a real number: connect it through the Connect WhatsApp button in your system (your first number is free for 3 days) and send messages to your own phone.
+Bridge partners have no Meta developer app of their own, so Meta's test phone numbers do not apply. Test with a real number: connect it through the Connect WhatsApp button in your system and send messages to your own phone.
 
 ### Verify a phone number is on WhatsApp:
 ```javascript
@@ -1606,7 +1606,7 @@ A: One WABA registration in WasapFlow corresponds to one phone number ID. If you
 A: Nothing. A partner account is free and never expires, and your first number is free for 3 days without a card. Add a card before the 3 days end to keep it; $10 is then charged and that slot covers up to 3 WABAs.
 
 **Q: Can I remove a WABA and add it back later?**  
-A: Yes. Removing a WABA stops API access for it immediately. Slots follow your active WABAs: removing WABAs lowers your slot count from the next cycle, and days already paid are not refunded. Re-registering restores full access.
+A: Yes. Removing a WABA stops new API access for that WABA immediately, but **if it was active at any point during the billing month, it still counts toward your peak WABA count** for that invoice. Re-registering restores full access. Re-registering the same WABA ID in the same month does not increase peak beyond what was already recorded.
 
 **Q: My client's access token expired. What now?**  
 A: Generate a new permanent token from Meta Business Manager (System Users), then call `POST /clients/register` again with the new token (it's an upsert — safe to call on existing WABAs). Alternatively, call `POST /clients/:wabaId/refresh` with `{ "access_token": "new_token" }` to update and sync quality rating in one step.
@@ -1618,7 +1618,7 @@ A: Call `POST /clients/:wabaId/resubscribe-webhook` to re-subscribe the WABA to 
 A: The partner dashboard is for your own use to manage your WABAs. Your clients interact with WhatsApp directly through your SaaS app — they don't need access to the WasapFlow partner portal.
 
 **Q: Is there a sandbox/test mode?**  
-A: No. Bridge partners have no Meta developer app, so Meta's test numbers do not apply. Connect a real number through the Connect WhatsApp button in your system (the first number is free for 3 days) and test by messaging your own phone.
+A: No. Bridge partners have no Meta developer app, so Meta's test numbers do not apply. Connect a real number through the Connect WhatsApp button in your system and test by messaging your own phone.
 
 **Q: Do I need my own Meta app or Meta permissions?**  
 A: No. WasapFlow's Meta app (a verified Tech Provider) holds `whatsapp_business_management` and `whatsapp_business_messaging`; your clients grant them to WasapFlow during Embedded Signup. You only call the Bridge API with your partner key.
